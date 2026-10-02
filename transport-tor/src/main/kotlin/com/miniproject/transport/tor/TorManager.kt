@@ -65,6 +65,8 @@ class TorManager(private val context: Context) : TorTransport {
     }
 
     private val serviceManager = TorServiceManager(context)
+    private val keyStore = OnionServiceKeyStore(context)
+    private var boundTorService: org.torproject.jni.TorService? = null
     private var socksPort: Int = 0
     private var controlPort: Int = 0
 
@@ -74,9 +76,43 @@ class TorManager(private val context: Context) : TorTransport {
     override fun start() {
         runBlocking {
             val service = serviceManager.startAndBind(timeoutMillis = 180_000)
+            boundTorService = service
             socksPort = service.socksPort
             Log.i(TAG, "Tor SOCKS port: $socksPort")
             require(socksPort > 0) { "Tor did not provide a valid SOCKS port (got $socksPort)" }
+
+            val control = service.torControlConnection
+                ?: throw IllegalStateException("TorControlConnection not available")
+
+            val savedKey = keyStore.loadPrivateKey()
+            val keySpec = if (savedKey != null) {
+                Log.i(TAG, "Restoring Onion Service from saved key (${savedKey.length} chars)")
+                "ED25519-V3:$savedKey"
+            } else {
+                Log.i(TAG, "Creating NEW Onion Service")
+                "NEW:ED25519-V3"
+            }
+
+            val ports = mapOf(80 to "127.0.0.1:$LOCAL_HS_PORT")
+            val result = control.addOnion(keySpec, ports)
+            Log.i(TAG, "ADD_ONION response: $result")
+
+            val serviceId = (result["onionAddress"] ?: result["ServiceID"])
+                ?.substringAfter("onionAddress=")?.substringBefore(":")?.trim()
+                ?: throw IllegalStateException("No service ID in ADD_ONION response: $result")
+            onionAddress = "$serviceId.onion"
+
+            val privKey = result["onionPrivKey"] ?: result["PrivateKey"]
+            if (savedKey == null && privKey != null) {
+                val base64Key = privKey.substringAfter("ED25519-V3:").trim()
+                if (base64Key.isNotEmpty() && base64Key != privKey) {
+                    keyStore.savePrivateKey(base64Key)
+                    Log.i(TAG, "Saved base64 key of length ${base64Key.length}")
+                } else {
+                    Log.e(TAG, "Failed to extract base64 from: ${privKey.take(30)}...")
+                }
+            }
+
             Log.i(TAG, "Onion address: $onionAddress")
         }
     }
@@ -105,7 +141,17 @@ class TorManager(private val context: Context) : TorTransport {
     }
 
     fun stop() {
+        val serviceId = onionAddress?.removeSuffix(".onion")
+        if (serviceId != null) {
+            try {
+                boundTorService?.torControlConnection?.delOnion(serviceId)
+                Log.i(TAG, "Removed Onion Service $serviceId")
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove Onion Service", e)
+            }
+        }
         serviceManager.unbind()
+        boundTorService = null
     }
 }
 

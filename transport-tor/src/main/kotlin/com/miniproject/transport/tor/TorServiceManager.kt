@@ -66,6 +66,19 @@ class TorServiceManager(private val context: Context) {
     suspend fun startAndBind(timeoutMillis: Long = 180_000): TorService {
         boundService?.let { return it }
 
+        val torrcFile = TorService.getTorrc(context)
+        torrcFile.parentFile?.mkdirs()
+        val torDir = context.getDir("TorService", Context.MODE_PRIVATE).absolutePath
+        torrcFile.writeText("""
+            SOCKSPort 9050
+            HTTPTunnelPort 8118
+            DataDirectory $torDir/data
+            HiddenServiceDir $torDir/data/hs
+            HiddenServicePort 80 127.0.0.1:7654
+            Log notice file $torDir/data/tor.log
+        """.trimIndent())
+        Log.i(TAG, "Wrote torrc to ${torrcFile.absolutePath}")
+
         val filter = IntentFilter(TorService.ACTION_STATUS)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             context.registerReceiver(statusReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
