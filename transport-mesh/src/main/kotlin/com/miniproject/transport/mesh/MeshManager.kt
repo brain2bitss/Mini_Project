@@ -8,9 +8,12 @@ import java.io.IOException
 import java.util.UUID
 import kotlin.concurrent.thread
 
+import android.annotation.SuppressLint
+
 /**
  * Handles Bluetooth RFCOMM and Wi-Fi Direct connections for local mesh networking.
  */
+@SuppressLint("MissingPermission")
 class MeshManager(private val context: Context) {
 
     private val bluetoothAdapter: BluetoothAdapter? = BluetoothAdapter.getDefaultAdapter()

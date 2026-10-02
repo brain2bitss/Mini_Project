@@ -1,7 +1,7 @@
 package com.miniproject.core.db
 
 import android.content.ContentValues
-import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.sqlcipher.database.SQLiteDatabase
 
 data class Contact(val id: Long = 0, val alias: String, val publicKey: ByteArray, val onionAddress: String?, val status: Int = 0)
 data class Message(val id: Long = 0, val contactId: Long, val body: String, val timestamp: Long, val isSent: Boolean, val isRead: Boolean)

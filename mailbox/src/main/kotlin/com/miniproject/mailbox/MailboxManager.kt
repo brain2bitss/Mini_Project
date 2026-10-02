@@ -1,7 +1,7 @@
 package com.miniproject.mailbox
 
 import com.miniproject.core.crypto.CryptoManager
-import com.miniproject.transport.tor.TorManager
+import com.miniproject.transport.tor.TorManagerStub
 import kotlin.concurrent.thread
 
 /**

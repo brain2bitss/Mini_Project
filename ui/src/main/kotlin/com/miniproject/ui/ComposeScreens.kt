@@ -57,6 +57,7 @@ fun OnboardingScreen(onComplete: () -> Unit) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
     val contacts = listOf("Alice", "Bob") // Mock data

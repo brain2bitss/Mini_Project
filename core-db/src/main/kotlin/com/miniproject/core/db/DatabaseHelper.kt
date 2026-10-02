@@ -1,8 +1,8 @@
 package com.miniproject.core.db
 
 import android.content.Context
-import net.zetetic.database.sqlcipher.SQLiteDatabase
-import net.zetetic.database.sqlcipher.SQLiteOpenHelper
+import net.sqlcipher.database.SQLiteDatabase
+import net.sqlcipher.database.SQLiteOpenHelper
 
 class DatabaseHelper(context: Context, private val passphrase: ByteArray) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
 

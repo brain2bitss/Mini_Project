@@ -25,6 +25,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     // SQLCipher
     implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite:2.4.0")
     
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

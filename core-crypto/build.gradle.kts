@@ -23,7 +23,7 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.12.0")
     // Cryptography libs
-    implementation("org.bouncycastle:bcprov-jdk15to18:1.77")
+    api("org.bouncycastle:bcprov-jdk15to18:1.77")
     
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

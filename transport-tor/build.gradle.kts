@@ -24,10 +24,6 @@ dependencies {
     implementation(project(":core-crypto"))
     implementation("androidx.core:core-ktx:1.12.0")
     
-    // Tor Android
-    implementation("info.guardianproject:tor-android:0.4.8.9")
-    implementation("info.guardianproject:jtorctl:0.4.5.7")
-    
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
 }
