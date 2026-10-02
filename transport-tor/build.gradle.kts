@@ -5,7 +5,7 @@ plugins {
 
 android {
     namespace = "com.miniproject.transport.tor"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         minSdk = 24
@@ -23,6 +23,11 @@ android {
 dependencies {
     implementation(project(":core-crypto"))
     implementation("androidx.core:core-ktx:1.12.0")
+    implementation("info.guardianproject:tor-android:0.4.8.22")
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3") {
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-stdlib")
+    }
     
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")

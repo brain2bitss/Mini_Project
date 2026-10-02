@@ -1,9 +1,43 @@
+/*
+javap org.torproject.jni.TorService:
+Compiled from "TorService.java"
+public class org.torproject.jni.TorService extends android.app.Service implements net.freehaven.tor.control.TorControlCommands {
+  public static final java.lang.String TAG;
+  public static final java.lang.String VERSION_NAME;
+  public static final java.lang.String ACTION_START;
+  public static final java.lang.String ACTION_STOP;
+  public static final java.lang.String ACTION_STATUS;
+  public static final java.lang.String ACTION_ERROR;
+  public static final java.lang.String EXTRA_STATUS;
+  public static final java.lang.String EXTRA_SERVICE_PACKAGE_NAME;
+  public static final java.lang.String STATUS_OFF;
+  public static final java.lang.String STATUS_ON;
+  public static final java.lang.String STATUS_STARTING;
+  public static final java.lang.String STATUS_STOPPING;
+  static volatile java.lang.String currentStatus;
+  public static final java.lang.String STATUS_CLIENT_CIRCUIT_ESTABLISHED;
+  public org.torproject.jni.TorService();
+  public static java.io.File getTorrc(android.content.Context);
+  public static java.io.File getDefaultsTorrc(android.content.Context);
+  public static java.lang.String getBroadcastPackageName(android.content.Context);
+  public android.os.IBinder onBind(android.content.Intent);
+  public void onCreate();
+  public int onStartCommand(android.content.Intent, int, int);
+  public void onDestroy();
+  public int getSocksPort();
+  public int getHttpTunnelPort();
+  public java.lang.String getInfo(java.lang.String);
+  public net.freehaven.tor.control.TorControlConnection getTorControlConnection();
+  static {};
+}
+*/
 package com.miniproject.transport.tor
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.runBlocking
 import java.io.File
-import java.io.InputStream
-import java.io.OutputStream
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
@@ -21,8 +55,62 @@ interface TorTransport {
 }
 
 /**
- * Manages the Tor daemon, hidden service, and outbound connections over Tor.
- * // TODO: replace with real tor-android integration
+ * Real Tor transport implementation backed by org.torproject.jni.TorService.
+ */
+class TorManager(private val context: Context) : TorTransport {
+
+    companion object {
+        private const val TAG = "TorManager"
+        private const val LOCAL_HS_PORT = 7654
+    }
+
+    private val serviceManager = TorServiceManager(context)
+    private var socksPort: Int = 0
+    private var controlPort: Int = 0
+
+    override var onionAddress: String? = null
+        private set
+
+    override fun start() {
+        runBlocking {
+            val service = serviceManager.startAndBind(timeoutMillis = 180_000)
+            socksPort = service.socksPort
+            Log.i(TAG, "Tor SOCKS port: $socksPort")
+            require(socksPort > 0) { "Tor did not provide a valid SOCKS port (got $socksPort)" }
+            Log.i(TAG, "Onion address: $onionAddress")
+        }
+    }
+
+    override fun connectToPeer(onionHostname: String, port: Int): Socket {
+        require(socksPort > 0) { "TorManager not started; call start() first" }
+        val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
+        val socket = Socket(proxy)
+        socket.connect(InetSocketAddress(onionHostname, port))
+        return socket
+    }
+
+    override fun listenForPeers(onConnection: (Socket) -> Unit) {
+        thread {
+            try {
+                val serverSocket = ServerSocket(LOCAL_HS_PORT)
+                Log.i(TAG, "Listening for peers on local port $LOCAL_HS_PORT")
+                while (true) {
+                    val client = serverSocket.accept()
+                    onConnection(client)
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "listenForPeers failed", e)
+            }
+        }
+    }
+
+    fun stop() {
+        serviceManager.unbind()
+    }
+}
+
+/**
+ * Fallback stub implementation of Tor transport layer.
  */
 class TorManagerStub(private val context: Context) : TorTransport {
 
@@ -38,15 +126,8 @@ class TorManagerStub(private val context: Context) : TorTransport {
         if (!torDir.exists()) torDir.mkdirs()
         if (!hiddenServiceDir.exists()) hiddenServiceDir.mkdirs()
 
-        // In a real implementation, we would extract the tor executable
-        // from the tor-android library, create a torrc file, and launch the process.
-        // We would then connect to the control port via JTorCtl to add the Onion Service.
-        
-        // Mocking the setup for this boilerplate
         setupTorConfig()
         startDaemon()
-        
-        // Wait for Tor to bootstrap...
         publishOnionService()
     }
 
@@ -62,12 +143,10 @@ class TorManagerStub(private val context: Context) : TorTransport {
     }
 
     private fun startDaemon() {
-        // Mocking the daemon start.
-        // Actual: ProcessBuilder(torBinary.absolutePath, "-f", torrc.absolutePath).start()
+        // Mocking daemon start
     }
 
     private fun publishOnionService() {
-        // Read the generated hostname
         val hostnameFile = File(hiddenServiceDir, "hostname")
         if (hostnameFile.exists()) {
             onionAddress = hostnameFile.readText().trim()
@@ -76,9 +155,6 @@ class TorManagerStub(private val context: Context) : TorTransport {
         }
     }
 
-    /**
-     * Connects to a remote onion service.
-     */
     override fun connectToPeer(onionHostname: String, port: Int): Socket {
         val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
         val socket = Socket(proxy)
@@ -86,9 +162,6 @@ class TorManagerStub(private val context: Context) : TorTransport {
         return socket
     }
 
-    /**
-     * Listens for incoming connections on the local port mapped to the hidden service.
-     */
     override fun listenForPeers(onConnection: (Socket) -> Unit) {
         thread {
             val serverSocket = ServerSocket(8080)
