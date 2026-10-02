@@ -63,11 +63,53 @@ class DebugTorActivity : ComponentActivity() {
     private fun startTor() {
         appendLog("Starting Tor...")
         torManager = TorManager(applicationContext)
+
+        // Fix 2: Start the TCP listener FIRST so incoming connections have
+        // somewhere to land once the onion service descriptor propagates.
+        torManager.listenForPeers { socket ->
+            try {
+                val reader = socket.getInputStream().bufferedReader()
+                val requestLine = reader.readLine() ?: return@listenForPeers
+                // Consume remaining HTTP headers
+                while (true) {
+                    val line = reader.readLine()
+                    if (line.isNullOrEmpty()) break
+                }
+                appendLog("Incoming: $requestLine")
+
+                val body = "OK"
+                val response = "HTTP/1.1 200 OK\r\n" +
+                    "Content-Type: text/plain\r\n" +
+                    "Content-Length: ${body.length}\r\n" +
+                    "Connection: close\r\n" +
+                    "\r\n" +
+                    body
+                socket.getOutputStream().write(response.toByteArray())
+                socket.getOutputStream().flush()
+                socket.close()
+            } catch (e: Exception) {
+                Log.e("DebugTorActivity", "Connection handler error", e)
+            }
+        }
+        appendLog("Listener started on port 7654")
+
         thread {
             try {
                 torManager.start()
                 appendLog("start() returned")
                 appendLog("onionAddress = ${torManager.onionAddress}")
+
+                // Fix 4: Wait for the descriptor to propagate to HSDirs
+                appendLog("Waiting for descriptor publication (up to 2 min)...")
+                val published = torManager.waitForDescriptorUpload(
+                    timeoutSeconds = 120,
+                    onProgress = { msg -> appendLog(msg) }
+                )
+                if (published) {
+                    appendLog("✓ Onion service is LIVE and reachable!")
+                } else {
+                    appendLog("⚠ Descriptor not confirmed — may need more time")
+                }
             } catch (e: Exception) {
                 Log.e("DebugTorActivity", "Tor start failed", e)
                 appendLog("FAILED: ${e.javaClass.simpleName}: ${e.message}")

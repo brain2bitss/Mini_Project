@@ -121,23 +121,85 @@ class TorManager(private val context: Context) : TorTransport {
         require(socksPort > 0) { "TorManager not started; call start() first" }
         val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
         val socket = Socket(proxy)
-        socket.connect(InetSocketAddress(onionHostname, port))
+        socket.soTimeout = 60_000
+        socket.connect(InetSocketAddress.createUnresolved(onionHostname, port), 60_000)
         return socket
     }
 
     override fun listenForPeers(onConnection: (Socket) -> Unit) {
-        thread {
+        thread(name = "TorManager-Listener") {
             try {
                 val serverSocket = ServerSocket(LOCAL_HS_PORT)
                 Log.i(TAG, "Listening for peers on local port $LOCAL_HS_PORT")
                 while (true) {
                     val client = serverSocket.accept()
-                    onConnection(client)
+                    thread(name = "TorManager-Handler") {
+                        try {
+                            onConnection(client)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Connection handler error", e)
+                        }
+                    }
                 }
             } catch (e: IOException) {
                 Log.e(TAG, "listenForPeers failed", e)
             }
         }
+    }
+
+    /**
+     * Self-connects to our own onion address through the SOCKS proxy to verify
+     * the descriptor has been published to the HSDirs. Blocks until the
+     * descriptor is reachable or the timeout expires.
+     *
+     * @return true if the self-test succeeded (descriptor is published)
+     */
+    fun waitForDescriptorUpload(
+        timeoutSeconds: Int = 120,
+        onProgress: ((String) -> Unit)? = null
+    ): Boolean {
+        val address = onionAddress ?: return false
+        require(socksPort > 0) { "TorManager not started" }
+
+        val deadline = System.currentTimeMillis() + timeoutSeconds * 1000L
+        var attempt = 0
+
+        while (System.currentTimeMillis() < deadline) {
+            attempt++
+            onProgress?.invoke("Self-test attempt $attempt...")
+            try {
+                val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
+                val socket = Socket(proxy)
+                socket.soTimeout = 30_000
+                socket.connect(InetSocketAddress.createUnresolved(address, 80), 30_000)
+
+                // Send a minimal HTTP request
+                val out = socket.getOutputStream()
+                out.write("GET /ping HTTP/1.0\r\nHost: $address\r\n\r\n".toByteArray())
+                out.flush()
+
+                // Read the response status line
+                val response = socket.getInputStream().bufferedReader().readLine()
+                socket.close()
+
+                Log.i(TAG, "Self-test succeeded on attempt $attempt: $response")
+                onProgress?.invoke("Descriptor published! Response: $response")
+                return true
+            } catch (e: Exception) {
+                Log.i(TAG, "Self-test attempt $attempt failed: ${e.message}")
+                onProgress?.invoke("Attempt $attempt: ${e.message}")
+                val remaining = deadline - System.currentTimeMillis()
+                if (remaining > 10_000) {
+                    Thread.sleep(10_000)
+                } else if (remaining > 0) {
+                    Thread.sleep(remaining)
+                }
+            }
+        }
+
+        Log.w(TAG, "Descriptor not confirmed after $timeoutSeconds seconds")
+        onProgress?.invoke("Timed out after $timeoutSeconds seconds")
+        return false
     }
 
     fun stop() {

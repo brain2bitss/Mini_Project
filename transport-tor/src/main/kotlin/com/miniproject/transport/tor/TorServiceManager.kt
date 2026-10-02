@@ -73,8 +73,6 @@ class TorServiceManager(private val context: Context) {
             SOCKSPort 9050
             HTTPTunnelPort 8118
             DataDirectory $torDir/data
-            HiddenServiceDir $torDir/data/hs
-            HiddenServicePort 80 127.0.0.1:7654
             Log notice file $torDir/data/tor.log
         """.trimIndent())
         Log.i(TAG, "Wrote torrc to ${torrcFile.absolutePath}")
