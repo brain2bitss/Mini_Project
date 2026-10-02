@@ -24,10 +24,16 @@ class DebugTorActivity : ComponentActivity() {
         }
 
         val startButton = Button(this).apply {
-            text = "Start Tor"
+            text = "Start Tor + BTP Listener"
             setOnClickListener { startTor() }
         }
         layout.addView(startButton)
+
+        val btpTestButton = Button(this).apply {
+            text = "BTP Self-Test"
+            setOnClickListener { runBtpSelfTest() }
+        }
+        layout.addView(btpTestButton)
 
         val stopButton = Button(this).apply {
             text = "Stop Tor"
@@ -64,34 +70,9 @@ class DebugTorActivity : ComponentActivity() {
         appendLog("Starting Tor...")
         torManager = TorManager(applicationContext)
 
-        // Fix 2: Start the TCP listener FIRST so incoming connections have
-        // somewhere to land once the onion service descriptor propagates.
-        torManager.listenForPeers { socket ->
-            try {
-                val reader = socket.getInputStream().bufferedReader()
-                val requestLine = reader.readLine() ?: return@listenForPeers
-                // Consume remaining HTTP headers
-                while (true) {
-                    val line = reader.readLine()
-                    if (line.isNullOrEmpty()) break
-                }
-                appendLog("Incoming: $requestLine")
-
-                val body = "OK"
-                val response = "HTTP/1.1 200 OK\r\n" +
-                    "Content-Type: text/plain\r\n" +
-                    "Content-Length: ${body.length}\r\n" +
-                    "Connection: close\r\n" +
-                    "\r\n" +
-                    body
-                socket.getOutputStream().write(response.toByteArray())
-                socket.getOutputStream().flush()
-                socket.close()
-            } catch (e: Exception) {
-                Log.e("DebugTorActivity", "Connection handler error", e)
-            }
-        }
-        appendLog("Listener started on port 7654")
+        // Start the BTP protocol listener BEFORE Tor, so it's ready
+        // when the onion service descriptor propagates.
+        torManager.startBtpListener { event -> appendLog("[BTP] $event") }
 
         thread {
             try {
@@ -99,7 +80,7 @@ class DebugTorActivity : ComponentActivity() {
                 appendLog("start() returned")
                 appendLog("onionAddress = ${torManager.onionAddress}")
 
-                // Fix 4: Wait for the descriptor to propagate to HSDirs
+                // Wait for descriptor publication
                 appendLog("Waiting for descriptor publication (up to 2 min)...")
                 val published = torManager.waitForDescriptorUpload(
                     timeoutSeconds = 120,
@@ -107,6 +88,7 @@ class DebugTorActivity : ComponentActivity() {
                 )
                 if (published) {
                     appendLog("✓ Onion service is LIVE and reachable!")
+                    appendLog("Ready for BTP Self-Test — tap the button above.")
                 } else {
                     appendLog("⚠ Descriptor not confirmed — may need more time")
                 }
@@ -117,11 +99,42 @@ class DebugTorActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Connects to our OWN onion address through Tor SOCKS, performs a
+     * BTP handshake as initiator, sends "Hello BTP!" encrypted with
+     * AES-256-GCM, and reads back the echo — proving the entire stack:
+     *
+     *   App → SOCKS → Tor circuit → Onion Service → BTP Handshake
+     *   → AES-GCM encrypt → transmit → AES-GCM decrypt → echo
+     */
+    private fun runBtpSelfTest() {
+        if (!::torManager.isInitialized || torManager.onionAddress == null) {
+            appendLog("ERROR: Start Tor first!")
+            return
+        }
+        val address = torManager.onionAddress!!
+        appendLog("═══ BTP Self-Test ═══")
+        appendLog("Connecting to $address via Tor SOCKS...")
+
+        thread {
+            val echo = torManager.btpConnectAndSend(
+                peerOnionAddress = address,
+                message = "Hello BTP!",
+                onEvent = { msg -> appendLog("[BTP-Client] $msg") }
+            )
+            if (echo != null && echo == "echo:Hello BTP!") {
+                appendLog("✓ BTP Self-Test PASSED — full end-to-end encrypted echo over Tor!")
+            } else if (echo != null) {
+                appendLog("⚠ BTP Self-Test: unexpected echo: \"$echo\"")
+            } else {
+                appendLog("✗ BTP Self-Test FAILED — see log above")
+            }
+        }
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // Do NOT stop TorManager here. Tor runs as a service and should
         // continue running even when the activity is closed.
-        // TorManager will be stopped explicitly by the user or when the app
-        // process dies.
     }
 }

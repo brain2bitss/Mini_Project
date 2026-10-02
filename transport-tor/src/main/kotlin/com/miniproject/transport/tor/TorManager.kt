@@ -35,6 +35,7 @@ package com.miniproject.transport.tor
 
 import android.content.Context
 import android.util.Log
+import com.miniproject.core.crypto.CryptoManager
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.IOException
@@ -148,6 +149,168 @@ class TorManager(private val context: Context) : TorTransport {
     }
 
     /**
+     * Starts a BTP protocol listener on the hidden service port.
+     * For each inbound connection:
+     *   1. Performs a BtpHandshake (X25519 + HKDF) — phone is responder (isAlice=false)
+     *   2. Reads one length-prefixed encrypted frame, decrypts with receiveKey
+     *   3. Logs the plaintext
+     *   4. Re-encrypts with sendKey and sends back (echo)
+     *   5. Closes the socket
+     *
+     * This proves the full BTP handshake works end-to-end over Tor.
+     */
+    fun startBtpListener(onEvent: ((String) -> Unit)? = null) {
+        thread(name = "TorManager-BtpListener") {
+            try {
+                val serverSocket = ServerSocket(LOCAL_HS_PORT)
+                Log.i(TAG, "BTP listener started on port $LOCAL_HS_PORT")
+                onEvent?.invoke("BTP listener started on port $LOCAL_HS_PORT")
+                while (true) {
+                    val client = serverSocket.accept()
+                    Log.i(TAG, "BTP: incoming connection from ${client.remoteSocketAddress}")
+                    onEvent?.invoke("BTP: incoming connection")
+                    thread(name = "TorManager-BtpHandler") {
+                        try {
+                            client.soTimeout = 60_000
+                            // Step 1: BTP handshake — we are responder (isAlice = false)
+                            val handshake = BtpHandshake()
+                            val session = handshake.performHandshake(
+                                client.getInputStream(),
+                                client.getOutputStream(),
+                                isAlice = false
+                            )
+                            val txHashHex = session.transcriptHash.take(8)
+                                .joinToString("") { "%02x".format(it) }
+                            Log.i(TAG, "BTP handshake complete — transcript: $txHashHex")
+                            onEvent?.invoke("Handshake OK — transcript: $txHashHex")
+
+                            // Step 2: Read one encrypted frame (4-byte length + ciphertext)
+                            val input = client.getInputStream()
+                            val lenBuf = ByteArray(4)
+                            var read = 0
+                            while (read < 4) {
+                                val r = input.read(lenBuf, read, 4 - read)
+                                if (r == -1) throw IOException("EOF reading frame length")
+                                read += r
+                            }
+                            val frameLen = java.nio.ByteBuffer.wrap(lenBuf).int
+                            require(frameLen in 1..65536) { "Invalid frame length: $frameLen" }
+                            val ciphertext = ByteArray(frameLen)
+                            read = 0
+                            while (read < frameLen) {
+                                val r = input.read(ciphertext, read, frameLen - read)
+                                if (r == -1) throw IOException("EOF reading frame body")
+                                read += r
+                            }
+
+                            // Step 3: Decrypt with receiveKey
+                            val plaintext = CryptoManager.decryptAesGcm(session.receiveKey, ciphertext)
+                            val message = String(plaintext, Charsets.UTF_8)
+                            Log.i(TAG, "BTP received: \"$message\" (${plaintext.size} bytes)")
+                            onEvent?.invoke("Received: \"$message\"")
+
+                            // Step 4: Encrypt echo with sendKey and send back
+                            val echoCiphertext = CryptoManager.encryptAesGcm(
+                                session.sendKey,
+                                "echo:$message".toByteArray(Charsets.UTF_8)
+                            )
+                            val echoLen = java.nio.ByteBuffer.allocate(4).putInt(echoCiphertext.size).array()
+                            client.getOutputStream().write(echoLen)
+                            client.getOutputStream().write(echoCiphertext)
+                            client.getOutputStream().flush()
+                            Log.i(TAG, "BTP sent echo (${echoCiphertext.size} bytes)")
+                            onEvent?.invoke("Sent echo (${echoCiphertext.size} bytes)")
+
+                            client.close()
+                        } catch (e: Exception) {
+                            Log.e(TAG, "BTP handler error", e)
+                            onEvent?.invoke("BTP error: ${e.message}")
+                            try { client.close() } catch (_: Exception) {}
+                        }
+                    }
+                }
+            } catch (e: IOException) {
+                Log.e(TAG, "BTP listener failed", e)
+                onEvent?.invoke("BTP listener failed: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Connects to a peer's onion address, performs a BTP handshake as initiator,
+     * sends one encrypted message, and reads back the echo.
+     * Used for testing the full BTP stack over Tor.
+     *
+     * @return the decrypted echo response, or null on failure
+     */
+    fun btpConnectAndSend(
+        peerOnionAddress: String,
+        message: String,
+        onEvent: ((String) -> Unit)? = null
+    ): String? {
+        require(socksPort > 0) { "TorManager not started" }
+        try {
+            onEvent?.invoke("Connecting to $peerOnionAddress...")
+            val socket = connectToPeer(peerOnionAddress, 80)
+            socket.soTimeout = 60_000
+
+            // Handshake — we are initiator (isAlice = true)
+            val handshake = BtpHandshake()
+            val session = handshake.performHandshake(
+                socket.getInputStream(),
+                socket.getOutputStream(),
+                isAlice = true
+            )
+            val txHashHex = session.transcriptHash.take(8)
+                .joinToString("") { "%02x".format(it) }
+            Log.i(TAG, "BTP handshake complete (initiator) — transcript: $txHashHex")
+            onEvent?.invoke("Handshake OK — transcript: $txHashHex")
+
+            // Encrypt and send
+            val ciphertext = CryptoManager.encryptAesGcm(
+                session.sendKey,
+                message.toByteArray(Charsets.UTF_8)
+            )
+            val lenBuf = java.nio.ByteBuffer.allocate(4).putInt(ciphertext.size).array()
+            socket.getOutputStream().write(lenBuf)
+            socket.getOutputStream().write(ciphertext)
+            socket.getOutputStream().flush()
+            Log.i(TAG, "BTP sent: \"$message\" (${ciphertext.size} bytes encrypted)")
+            onEvent?.invoke("Sent: \"$message\"")
+
+            // Read echo
+            val echoLenBuf = ByteArray(4)
+            var read = 0
+            while (read < 4) {
+                val r = socket.getInputStream().read(echoLenBuf, read, 4 - read)
+                if (r == -1) throw IOException("EOF reading echo length")
+                read += r
+            }
+            val echoLen = java.nio.ByteBuffer.wrap(echoLenBuf).int
+            require(echoLen in 1..65536) { "Invalid echo length: $echoLen" }
+            val echoCiphertext = ByteArray(echoLen)
+            read = 0
+            while (read < echoLen) {
+                val r = socket.getInputStream().read(echoCiphertext, read, echoLen - read)
+                if (r == -1) throw IOException("EOF reading echo body")
+                read += r
+            }
+
+            val echoPlaintext = CryptoManager.decryptAesGcm(session.receiveKey, echoCiphertext)
+            val echoMessage = String(echoPlaintext, Charsets.UTF_8)
+            Log.i(TAG, "BTP received echo: \"$echoMessage\"")
+            onEvent?.invoke("Echo: \"$echoMessage\"")
+
+            socket.close()
+            return echoMessage
+        } catch (e: Exception) {
+            Log.e(TAG, "BTP connect failed", e)
+            onEvent?.invoke("BTP connect failed: ${e.message}")
+            return null
+        }
+    }
+
+    /**
      * Self-connects to our own onion address through the SOCKS proxy to verify
      * the descriptor has been published to the HSDirs. Blocks until the
      * descriptor is reachable or the timeout expires.
@@ -173,17 +336,12 @@ class TorManager(private val context: Context) : TorTransport {
                 socket.soTimeout = 30_000
                 socket.connect(InetSocketAddress.createUnresolved(address, 80), 30_000)
 
-                // Send a minimal HTTP request
-                val out = socket.getOutputStream()
-                out.write("GET /ping HTTP/1.0\r\nHost: $address\r\n\r\n".toByteArray())
-                out.flush()
-
-                // Read the response status line
-                val response = socket.getInputStream().bufferedReader().readLine()
+                // TCP connect succeeded — the descriptor is published and reachable.
+                // Close immediately; we don't need to speak any protocol here.
                 socket.close()
 
-                Log.i(TAG, "Self-test succeeded on attempt $attempt: $response")
-                onProgress?.invoke("Descriptor published! Response: $response")
+                Log.i(TAG, "Self-test succeeded on attempt $attempt — descriptor is published")
+                onProgress?.invoke("Descriptor published! (TCP connect succeeded)")
                 return true
             } catch (e: Exception) {
                 Log.i(TAG, "Self-test attempt $attempt failed: ${e.message}")
