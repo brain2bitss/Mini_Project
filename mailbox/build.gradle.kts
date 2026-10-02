@@ -4,7 +4,8 @@ plugins {
 
 android {
     namespace = "com.miniproject.mailbox"
-    compileSdk = 35
+    compileSdk = 37
+    compileSdkMinor = 2
 
     defaultConfig {
         minSdk = 24

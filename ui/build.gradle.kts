@@ -5,7 +5,8 @@ plugins {
 
 android {
     namespace = "com.miniproject.ui"
-    compileSdk = 35
+    compileSdk = 37
+    compileSdkMinor = 2
 
     defaultConfig {
         applicationId = "com.miniproject.ui"
