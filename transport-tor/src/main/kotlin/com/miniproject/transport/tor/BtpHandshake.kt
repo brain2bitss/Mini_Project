@@ -57,7 +57,11 @@ class BtpHandshake {
         // 4. Compute shared secret
         val sharedSecret = CryptoManager.performX25519KeyAgreement(privateKey, peerPublicKey)
 
-        // 5. Derive symmetric key using BLAKE2b (HKDF-like)
-        return CryptoManager.hashBlake2b(sharedSecret, 32)
+        // 5. Derive symmetric key using HKDF-SHA256
+        val hkdf = org.bouncycastle.crypto.generators.HKDFBytesGenerator(org.bouncycastle.crypto.digests.SHA256Digest())
+        hkdf.init(org.bouncycastle.crypto.params.HKDFParameters(sharedSecret, ByteArray(0), null))
+        val derivedKey = ByteArray(32)
+        hkdf.generateBytes(derivedKey, 0, 32)
+        return derivedKey
     }
 }

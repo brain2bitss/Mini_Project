@@ -1,0 +1,41 @@
+# Gradle
+.gradle
+/build/
+/*/build/
+
+# Local configuration file (sdk path, etc)
+local.properties
+
+# Log Files
+*.log
+
+# Windows thumbnail db
+Thumbs.db
+
+# OS X
+.DS_Store
+
+# IntelliJ IDEA / Android Studio
+.idea/
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/gradle.xml
+.idea/assetWizardSettings.xml
+.idea/dictionaries
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+.idea/vcs.xml
+.idea/navEditor.xml
+.idea/kotlin_compiler.xml
+.idea/compiler.xml
+.idea/codeStyles/
+*.iml
+*.iws
+
+# JDK
+jdk-17.0.2/
+jdk17.zip
+
+# Misc zips
+cmdline-tools.zip

@@ -8,8 +8,10 @@ import kotlin.concurrent.thread
  * Mailbox feature:
  * A secondary device (like a Raspberry Pi or always-on phone) acts as a mailbox.
  * It receives encrypted messages while the primary device is offline.
+ * // TODO: implement Tor sync loop with primary device
+ * // TODO: implement authentication challenge/response
  */
-class MailboxManager(private val torManager: TorManager) {
+class MailboxManager(private val torManager: TorManagerStub) {
 
     private var isMailboxModeEnabled = false
 

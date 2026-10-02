@@ -70,7 +70,7 @@ class CryptoManagerTest {
         try {
             CryptoManager.decryptAesGcm(key, ciphertext)
             fail("Decryption should fail due to tampered MAC")
-        } catch (e: Exception) {
+        } catch (e: InvalidCipherTextException) {
             // Expected
         }
     }

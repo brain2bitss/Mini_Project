@@ -11,19 +11,30 @@ import java.net.Socket
 import kotlin.concurrent.thread
 
 /**
- * Manages the Tor daemon, hidden service, and outbound connections over Tor.
+ * Interface for Tor transport layer.
  */
-class TorManager(private val context: Context) {
+interface TorTransport {
+    val onionAddress: String?
+    fun start()
+    fun connectToPeer(onionHostname: String, port: Int = 80): Socket
+    fun listenForPeers(onConnection: (Socket) -> Unit)
+}
+
+/**
+ * Manages the Tor daemon, hidden service, and outbound connections over Tor.
+ * // TODO: replace with real tor-android integration
+ */
+class TorManagerStub(private val context: Context) : TorTransport {
 
     private val torDir = File(context.filesDir, "tor")
     private val hiddenServiceDir = File(torDir, "hidden_service")
     private var controlPort = 9051
     private var socksPort = 9050
 
-    var onionAddress: String? = null
+    override var onionAddress: String? = null
         private set
 
-    fun start() {
+    override fun start() {
         if (!torDir.exists()) torDir.mkdirs()
         if (!hiddenServiceDir.exists()) hiddenServiceDir.mkdirs()
 
@@ -68,7 +79,7 @@ class TorManager(private val context: Context) {
     /**
      * Connects to a remote onion service.
      */
-    fun connectToPeer(onionHostname: String, port: Int = 80): Socket {
+    override fun connectToPeer(onionHostname: String, port: Int): Socket {
         val proxy = Proxy(Proxy.Type.SOCKS, InetSocketAddress("127.0.0.1", socksPort))
         val socket = Socket(proxy)
         socket.connect(InetSocketAddress(onionHostname, port))
@@ -78,7 +89,7 @@ class TorManager(private val context: Context) {
     /**
      * Listens for incoming connections on the local port mapped to the hidden service.
      */
-    fun listenForPeers(onConnection: (Socket) -> Unit) {
+    override fun listenForPeers(onConnection: (Socket) -> Unit) {
         thread {
             val serverSocket = ServerSocket(8080)
             while (true) {

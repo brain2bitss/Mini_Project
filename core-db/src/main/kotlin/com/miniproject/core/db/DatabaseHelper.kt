@@ -4,7 +4,15 @@ import android.content.Context
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 
-class DatabaseHelper(context: Context) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+class DatabaseHelper(context: Context, private val passphrase: ByteArray) : SQLiteOpenHelper(context, DATABASE_NAME, null, DATABASE_VERSION) {
+
+    init {
+        SQLiteDatabase.loadLibs(context)
+    }
+
+    fun openDatabase(): SQLiteDatabase {
+        return getWritableDatabase(passphrase)
+    }
 
     companion object {
         private const val DATABASE_NAME = "bramble.db"

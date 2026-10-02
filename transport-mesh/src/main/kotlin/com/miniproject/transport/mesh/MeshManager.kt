@@ -22,6 +22,9 @@ class MeshManager(private val context: Context) {
 
     /**
      * Starts listening for incoming Bluetooth connections.
+     * // TODO: implement device discovery loop
+     * // TODO: handle Android Bluetooth permissions checks and requests
+     * // TODO: implement broadcast receivers for Bluetooth state changes
      */
     fun startBluetoothListening(onConnection: (BluetoothSocket) -> Unit) {
         if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return
