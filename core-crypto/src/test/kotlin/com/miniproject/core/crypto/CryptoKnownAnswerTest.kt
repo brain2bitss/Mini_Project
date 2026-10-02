@@ -107,59 +107,39 @@ class CryptoKnownAnswerTest {
 
     @Test
     fun testEd25519_RFC8032_TestVector1() {
-        // RFC 8032 Section 7.1, TEST 1
-        // SECRET KEY (seed, 32 bytes):
+        // RFC 8032 Section 7.1, TEST 1 — exact hex from the RFC
         val secretKeySeed = hex(
             "9d61b19deffd5a60ba844af492ec2cc4" +
             "4449c5697b326919703bac031cae7f60"
         )
-        // MESSAGE (empty)
+        val publicKeyExpected = hex(
+            "d75a980182b10ab7d54bfed3c964073a" +
+            "0ee172f3daa62325af021a68f707511a"
+        )
         val message = ByteArray(0)
+        val signatureExpected = hex(
+            "e5564300c360ac729086e2cc806e828a" +
+            "84877f1eb8e5d974d873e06522490155" +
+            "5fb8821590a33bacc61e39701cf9b46b" +
+            "d25bf5f0595bbe24655141438e7a100b"
+        )
 
         val privateKey = Ed25519PrivateKeyParameters(secretKeySeed, 0)
         val publicKey  = privateKey.generatePublicKey()
 
-        // Print for manual cross-check against RFC 8032 §7.1 Test 1
-        System.out.println("Ed25519 Test 1 — PUBLIC KEY:  ${publicKey.encoded.toHex()}")
+        assertArrayEquals(
+            "Ed25519 public key must match RFC 8032 §7.1 test 1",
+            publicKeyExpected, publicKey.encoded
+        )
 
-        // Assert public key is 32 bytes
-        assertEquals("Ed25519 public key must be 32 bytes", 32, publicKey.encoded.size)
-
-        // Sign
         val signer = Ed25519Signer()
         signer.init(true, privateKey)
         signer.update(message, 0, message.size)
         val signature = signer.generateSignature()
 
-        System.out.println("Ed25519 Test 1 — SIGNATURE:   ${signature.toHex()}")
-
-        // Assert signature is 64 bytes
-        assertEquals("Ed25519 signature must be 64 bytes", 64, signature.size)
-
-        // Assert determinism: signing twice with same key and message produces same sig
-        val signer2 = Ed25519Signer()
-        signer2.init(true, privateKey)
-        signer2.update(message, 0, message.size)
-        val signature2 = signer2.generateSignature()
-        assertArrayEquals("Ed25519 signing must be deterministic", signature, signature2)
-
-        // Assert verification round-trip
-        val verifier = Ed25519Signer()
-        verifier.init(false, publicKey)
-        verifier.update(message, 0, message.size)
-        assertTrue(
-            "Ed25519 verification must succeed for RFC 8032 test vector",
-            verifier.verifySignature(signature)
-        )
-
-        // Assert tampered message fails verification
-        val badVerifier = Ed25519Signer()
-        badVerifier.init(false, publicKey)
-        val tamperedMsg = byteArrayOf(0x42)
-        badVerifier.update(tamperedMsg, 0, tamperedMsg.size)
-        assertFalse(
-            "Ed25519 verification must fail for tampered message",
-            badVerifier.verifySignature(signature)
+        assertArrayEquals(
+            "Ed25519 signature must match RFC 8032 §7.1 test 1",
+            signatureExpected, signature
         )
     }
 
@@ -291,23 +271,20 @@ class CryptoKnownAnswerTest {
 
     @Test
     fun testBlake2b_abc() {
-        // BLAKE2b-512 of "abc"
-        // Reference: https://www.blake2.net/ and blake2b reference implementation
+        // BLAKE2b-512("abc") — canonical reference from https://www.blake2.net/
+        val expectedHash = hex(
+            "ba80a53f981c4d0d6a2797b69f12f6e9" +
+            "4c212f14685ac4b74b12bb6fdbffa2d1" +
+            "7d87c5392aab792dc252d5de4533cc95" +
+            "18d38aa8dbf1925ab92386edd4009923"
+        )
+
         val hash = CryptoManager.hashBlake2b("abc".toByteArray(Charsets.US_ASCII), digestSize = 64)
 
-        // Print for manual cross-check
-        System.out.println("BLAKE2b-512('abc') = ${hash.toHex()}")
-
-        // Assert correct length
-        assertEquals("BLAKE2b-512 must be 64 bytes", 64, hash.size)
-
-        // Assert determinism
-        val hash2 = CryptoManager.hashBlake2b("abc".toByteArray(Charsets.US_ASCII), digestSize = 64)
-        assertArrayEquals("BLAKE2b-512 must be deterministic", hash, hash2)
-
-        // Assert different input produces different hash
-        val hash3 = CryptoManager.hashBlake2b("abd".toByteArray(Charsets.US_ASCII), digestSize = 64)
-        assertFalse("Different inputs must produce different hashes", hash.contentEquals(hash3))
+        assertArrayEquals(
+            "BLAKE2b-512('abc') must match canonical reference vector",
+            expectedHash, hash
+        )
     }
 
     // ── RFC 5869 Test Case 1 — HKDF-SHA256 ──────────────────────────
