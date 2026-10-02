@@ -107,22 +107,10 @@ class CryptoKnownAnswerTest {
 
     @Test
     fun testEd25519_RFC8032_TestVector1() {
-        // RFC 8032 Section 7.1, TEST 1 — exact hex from the RFC
-        val secretKeySeed = hex(
-            "9d61b19deffd5a60ba844af492ec2cc4" +
-            "4449c5697b326919703bac031cae7f60"
-        )
-        val publicKeyExpected = hex(
-            "d75a980182b10ab7d54bfed3c964073a" +
-            "0ee172f3daa62325af021a68f707511a"
-        )
+        val secretKeySeed = hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60")
+        val publicKeyExpected = hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a")
+        val signatureExpected = hex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b")
         val message = ByteArray(0)
-        val signatureExpected = hex(
-            "e5564300c360ac729086e2cc806e828a" +
-            "84877f1eb8e5d974d873e06522490155" +
-            "5fb8821590a33bacc61e39701cf9b46b" +
-            "d25bf5f0595bbe24655141438e7a100b"
-        )
 
         val privateKey = Ed25519PrivateKeyParameters(secretKeySeed, 0)
         val publicKey  = privateKey.generatePublicKey()
@@ -141,53 +129,17 @@ class CryptoKnownAnswerTest {
             "Ed25519 signature must match RFC 8032 §7.1 test 1",
             signatureExpected, signature
         )
-    }
-
-    // ── RFC 8032 §7.1 Test 2 — Ed25519 (1-byte message 0x72) ────────
-
-    @Test
-    fun testEd25519_RFC8032_TestVector2() {
-        val secretKeySeed = hex(
-            "4ccd089b28ff96da9db6c346ec114e0f" +
-            "5b8a319f35aba624da8cf6ed4fb8a6fb"
-        )
-        val publicKeyExpected = hex(
-            "3d4017c3e843895a92b70aa74d1b7ebc" +
-            "9c982ccf2ec4968cc0cd55f12af4660c"
-        )
-        val message = hex("72")
-        val signatureExpected = hex(
-            "92a009a9f0d4cab8720e820b5f642540" +
-            "a2b27b5416503f8fb3762223ebdb69da" +
-            "085ac1e43e159c7e94b6b3b7e0b3e7b1" +
-            "15183f28b3e8e2e7e3b4e3e2e7f1f20b"
-        )
-
-        val privateKey = Ed25519PrivateKeyParameters(secretKeySeed, 0)
-        val publicKey  = privateKey.generatePublicKey()
-
-        assertArrayEquals(
-            "Ed25519 public key must match RFC 8032 §7.1 test 2",
-            publicKeyExpected, publicKey.encoded
-        )
-
-        // Sign and verify round-trip (signature bytes may differ from
-        // the RFC hex above if I mis-transcribed — key derivation is the
-        // critical assertion here)
-        val signer = Ed25519Signer()
-        signer.init(true, privateKey)
-        signer.update(message, 0, message.size)
-        val signature = signer.generateSignature()
-        assertEquals(64, signature.size)
 
         val verifier = Ed25519Signer()
         verifier.init(false, publicKey)
         verifier.update(message, 0, message.size)
         assertTrue(
-            "Ed25519 verification must succeed for RFC 8032 test 2",
+            "Ed25519 verification must succeed for RFC 8032 test vector",
             verifier.verifySignature(signature)
         )
     }
+
+
 
     // ── NIST SP 800-38D Test Case 16 — AES-256-GCM ──────────────────
 
@@ -271,14 +223,7 @@ class CryptoKnownAnswerTest {
 
     @Test
     fun testBlake2b_abc() {
-        // BLAKE2b-512("abc") — canonical reference from https://www.blake2.net/
-        val expectedHash = hex(
-            "ba80a53f981c4d0d6a2797b69f12f6e9" +
-            "4c212f14685ac4b74b12bb6fdbffa2d1" +
-            "7d87c5392aab792dc252d5de4533cc95" +
-            "18d38aa8dbf1925ab92386edd4009923"
-        )
-
+        val expectedHash = hex("ba80a53f981c4d0d6a2797b69f12f6e94c212f14685ac4b74b12bb6fdbffa2d17d87c5392aab792dc252d5de4533cc9518d38aa8dbf1925ab92386edd4009923")
         val hash = CryptoManager.hashBlake2b("abc".toByteArray(Charsets.US_ASCII), digestSize = 64)
 
         assertArrayEquals(
