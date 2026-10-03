@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.ui.graphics.asImageBitmap
 
 @Composable
 fun AppNavigation() {
@@ -383,13 +384,23 @@ fun AddContactScreen(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             verticalArrangement = Arrangement.Center
                         ) {
+                            val myOnionAddress by viewModel.myOnionAddress.collectAsState()
+                            val qrUri = "bramble://${myOnionAddress ?: ""}"
+                            val qrBitmap = remember(qrUri) { QrUtils.generateQrCode(qrUri, 500) }
+                            
                             Box(
                                 modifier = Modifier
                                     .size(200.dp)
                                     .background(Color.White, RoundedCornerShape(8.dp)),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text("[Mint Green QR Code]", color = MaterialTheme.colorScheme.primary)
+                                qrBitmap?.let {
+                                    androidx.compose.foundation.Image(
+                                        bitmap = it.asImageBitmap(),
+                                        contentDescription = "My QR Code",
+                                        modifier = Modifier.fillMaxSize()
+                                    )
+                                } ?: Text("Loading QR...", color = MaterialTheme.colorScheme.primary)
                             }
                             Spacer(modifier = Modifier.height(24.dp))
                             Surface(
