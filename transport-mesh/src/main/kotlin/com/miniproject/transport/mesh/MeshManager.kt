@@ -68,4 +68,47 @@ class MeshManager(private val context: Context) {
             return null
         }
     }
+
+    /**
+     * Starts discovering nearby Bluetooth devices and filtering them.
+     */
+    fun startDiscovery(onDeviceFound: (String, String) -> Unit): android.content.BroadcastReceiver? {
+        if (bluetoothAdapter == null || !bluetoothAdapter.isEnabled) return null
+
+        val receiver = object : android.content.BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: android.content.Intent) {
+                when (intent.action) {
+                    android.bluetooth.BluetoothDevice.ACTION_FOUND -> {
+                        val device: android.bluetooth.BluetoothDevice? = 
+                            intent.getParcelableExtra(android.bluetooth.BluetoothDevice.EXTRA_DEVICE)
+                        if (device != null) {
+                            val name = device.name ?: "Unknown"
+                            val address = device.address
+                            if (name.contains(NAME, ignoreCase = true) || name == "Unknown") {
+                                onDeviceFound(name, address)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        val filter = android.content.IntentFilter(android.bluetooth.BluetoothDevice.ACTION_FOUND)
+        context.registerReceiver(receiver, filter)
+        bluetoothAdapter.startDiscovery()
+        return receiver
+    }
+    
+    /**
+     * Stops discovery and unregisters the receiver.
+     */
+    fun stopDiscovery(receiver: android.content.BroadcastReceiver?) {
+        if (receiver != null) {
+            try {
+                context.unregisterReceiver(receiver)
+            } catch (e: Exception) {
+                // Ignore if not registered
+            }
+        }
+        bluetoothAdapter?.cancelDiscovery()
+    }
 }

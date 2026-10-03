@@ -39,6 +39,16 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
             loadContacts()
         }
     }
+    private var bluetoothReceiver: android.content.BroadcastReceiver? = null
+
+    fun startBluetoothScan(onDeviceFound: (String, String) -> Unit) {
+        bluetoothReceiver = app.meshManager.startDiscovery(onDeviceFound)
+    }
+
+    fun stopBluetoothScan() {
+        app.meshManager.stopDiscovery(bluetoothReceiver)
+        bluetoothReceiver = null
+    }
 }
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {

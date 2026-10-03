@@ -22,6 +22,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.material3.CircularProgressIndicator
 
 @Composable
 fun AppNavigation() {
@@ -313,7 +314,7 @@ fun AddContactScreen(
     viewModel: ContactsViewModel = viewModel()
 ) {
     var selectedTabIndex by remember { mutableStateOf(0) }
-    val tabs = listOf("In person", "At a distance", "My link")
+    val tabs = listOf("In person", "At a distance", "Nearby", "My link")
 
     Scaffold(
         topBar = {
@@ -393,6 +394,57 @@ fun AddContactScreen(
                         }
                     }
                     2 -> {
+                        // Nearby (Bluetooth)
+                        var isScanning by remember { mutableStateOf(false) }
+                        var discoveredDevices by remember { mutableStateOf(emptyList<Pair<String, String>>()) }
+                        
+                        androidx.compose.runtime.DisposableEffect(isScanning) {
+                            if (isScanning) {
+                                discoveredDevices = emptyList()
+                                viewModel.startBluetoothScan { name, address ->
+                                    discoveredDevices = discoveredDevices + (name to address)
+                                }
+                            } else {
+                                viewModel.stopBluetoothScan()
+                            }
+                            onDispose {
+                                viewModel.stopBluetoothScan()
+                            }
+                        }
+                        
+                        Column(
+                            modifier = Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text("Find contacts broadcasting via Bluetooth.", style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            Button(onClick = { isScanning = !isScanning }, modifier = Modifier.fillMaxWidth()) {
+                                Text(if (isScanning) "Stop Scanning" else "Scan Nearby")
+                            }
+                            Spacer(modifier = Modifier.height(16.dp))
+                            if (isScanning) {
+                                CircularProgressIndicator(color = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
+                                Spacer(modifier = Modifier.height(16.dp))
+                            }
+                            LazyColumn(modifier = Modifier.fillMaxSize()) {
+                                items(discoveredDevices) { device ->
+                                    Card(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        onClick = {
+                                            viewModel.addContact(device.second) // treat address as contact ID for MVP
+                                            onAdded()
+                                        }
+                                    ) {
+                                        Column(modifier = Modifier.padding(16.dp)) {
+                                            Text(device.first, style = MaterialTheme.typography.titleMedium)
+                                            Text(device.second, style = MaterialTheme.typography.labelSmall)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    3 -> {
                         // My link
                         Column(
                             modifier = Modifier.fillMaxSize(),

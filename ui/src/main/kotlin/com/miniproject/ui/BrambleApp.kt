@@ -13,6 +13,7 @@ class BrambleApp : Application() {
     lateinit var daos: Daos
     lateinit var messageRepository: MessageRepository
     lateinit var torManager: TorManager
+    lateinit var meshManager: com.miniproject.transport.mesh.MeshManager
     lateinit var queueWorker: QueueWorker
     lateinit var btpSessionManager: BtpSessionManager
 
@@ -21,9 +22,11 @@ class BrambleApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
-        // Initialize TorManager in background
+        // Initialize Managers in background
         torManager = TorManager(this)
         torManager.start()
+        
+        meshManager = com.miniproject.transport.mesh.MeshManager(this)
     }
 
     /**
