@@ -57,6 +57,35 @@ data class Message(
     val expiryAt: Long? = null
 )
 
+data class Forum(
+    val id: Long = 0,
+    val title: String,
+    val description: String?,
+    val creatorPublicKey: ByteArray
+)
+
+data class ForumPost(
+    val id: Long = 0,
+    val forumId: Long,
+    val authorPublicKey: ByteArray,
+    val body: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+data class Blog(
+    val id: Long = 0,
+    val authorPublicKey: ByteArray,
+    val title: String
+)
+
+data class BlogPost(
+    val id: Long = 0,
+    val blogId: Long,
+    val title: String,
+    val body: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
 data class OutgoingQueueItem(
     val id: Long = 0,
     val contactId: Long?,
@@ -313,6 +342,105 @@ class Daos(private val db: SQLiteDatabase) {
     
     fun removeRelayPayload(id: Long) {
         db.delete(DatabaseHelper.TABLE_RELAY_QUEUE, "id = ?", arrayOf(id.toString()))
+    }
+    // --- Forums DAO ---
+    fun insertForum(forum: Forum): Long {
+        val values = ContentValues().apply {
+            put("title", forum.title)
+            put("description", forum.description)
+            put("creator_public_key", forum.creatorPublicKey)
+        }
+        return db.insert(DatabaseHelper.TABLE_FORUMS, null, values)
+    }
+
+    fun getAllForums(): List<Forum> {
+        val forums = mutableListOf<Forum>()
+        db.query(DatabaseHelper.TABLE_FORUMS, null, null, null, null, null, "id DESC").use { cursor ->
+            while (cursor.moveToNext()) {
+                forums.add(Forum(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                    description = cursor.getString(cursor.getColumnIndexOrThrow("description")),
+                    creatorPublicKey = cursor.getBlob(cursor.getColumnIndexOrThrow("creator_public_key"))
+                ))
+            }
+        }
+        return forums
+    }
+
+    fun insertForumPost(post: ForumPost): Long {
+        val values = ContentValues().apply {
+            put("forum_id", post.forumId)
+            put("author_public_key", post.authorPublicKey)
+            put("body", post.body)
+            put("timestamp", post.timestamp)
+        }
+        return db.insert(DatabaseHelper.TABLE_FORUM_POSTS, null, values)
+    }
+
+    fun getForumPosts(forumId: Long): List<ForumPost> {
+        val posts = mutableListOf<ForumPost>()
+        db.query(DatabaseHelper.TABLE_FORUM_POSTS, null, "forum_id = ?", arrayOf(forumId.toString()), null, null, "timestamp ASC").use { cursor ->
+            while (cursor.moveToNext()) {
+                posts.add(ForumPost(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    forumId = cursor.getLong(cursor.getColumnIndexOrThrow("forum_id")),
+                    authorPublicKey = cursor.getBlob(cursor.getColumnIndexOrThrow("author_public_key")),
+                    body = cursor.getString(cursor.getColumnIndexOrThrow("body")),
+                    timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp"))
+                ))
+            }
+        }
+        return posts
+    }
+
+    // --- Blogs DAO ---
+    fun insertBlog(blog: Blog): Long {
+        val values = ContentValues().apply {
+            put("author_public_key", blog.authorPublicKey)
+            put("title", blog.title)
+        }
+        return db.insert(DatabaseHelper.TABLE_BLOGS, null, values)
+    }
+
+    fun getAllBlogs(): List<Blog> {
+        val blogs = mutableListOf<Blog>()
+        db.query(DatabaseHelper.TABLE_BLOGS, null, null, null, null, null, "title ASC").use { cursor ->
+            while (cursor.moveToNext()) {
+                blogs.add(Blog(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    authorPublicKey = cursor.getBlob(cursor.getColumnIndexOrThrow("author_public_key")),
+                    title = cursor.getString(cursor.getColumnIndexOrThrow("title"))
+                ))
+            }
+        }
+        return blogs
+    }
+
+    fun insertBlogPost(post: BlogPost): Long {
+        val values = ContentValues().apply {
+            put("blog_id", post.blogId)
+            put("title", post.title)
+            put("body", post.body)
+            put("timestamp", post.timestamp)
+        }
+        return db.insert(DatabaseHelper.TABLE_BLOG_POSTS, null, values)
+    }
+
+    fun getBlogPosts(blogId: Long): List<BlogPost> {
+        val posts = mutableListOf<BlogPost>()
+        db.query(DatabaseHelper.TABLE_BLOG_POSTS, null, "blog_id = ?", arrayOf(blogId.toString()), null, null, "timestamp DESC").use { cursor ->
+            while (cursor.moveToNext()) {
+                posts.add(BlogPost(
+                    id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                    blogId = cursor.getLong(cursor.getColumnIndexOrThrow("blog_id")),
+                    title = cursor.getString(cursor.getColumnIndexOrThrow("title")),
+                    body = cursor.getString(cursor.getColumnIndexOrThrow("body")),
+                    timestamp = cursor.getLong(cursor.getColumnIndexOrThrow("timestamp"))
+                ))
+            }
+        }
+        return posts
     }
 }
 

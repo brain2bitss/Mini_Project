@@ -95,3 +95,63 @@ class OnboardingViewModel(application: Application) : AndroidViewModel(applicati
         app.unlock(passphrase)
     }
 }
+
+class ForumsViewModel(application: Application) : AndroidViewModel(application) {
+    private val app = application as BrambleApp
+
+    private val _forums = MutableStateFlow<List<com.miniproject.core.db.Forum>>(emptyList())
+    val forums: StateFlow<List<com.miniproject.core.db.Forum>> = _forums
+
+    private val _posts = MutableStateFlow<List<com.miniproject.core.db.ForumPost>>(emptyList())
+    val posts: StateFlow<List<com.miniproject.core.db.ForumPost>> = _posts
+
+    fun loadForums() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _forums.value = app.daos.getAllForums()
+        }
+    }
+
+    fun loadPosts(forumId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _posts.value = app.daos.getForumPosts(forumId)
+        }
+    }
+    
+    fun createForum(title: String, description: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pubkey = app.daos.getIdentity()?.pubkey ?: ByteArray(32)
+            app.daos.insertForum(com.miniproject.core.db.Forum(title = title, description = description, creatorPublicKey = pubkey))
+            loadForums()
+        }
+    }
+
+    fun postReply(forumId: Long, body: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val pubkey = app.daos.getIdentity()?.pubkey ?: ByteArray(32)
+            app.daos.insertForumPost(com.miniproject.core.db.ForumPost(forumId = forumId, authorPublicKey = pubkey, body = body))
+            loadPosts(forumId)
+        }
+    }
+}
+
+class BlogsViewModel(application: Application) : AndroidViewModel(application) {
+    private val app = application as BrambleApp
+
+    private val _blogs = MutableStateFlow<List<com.miniproject.core.db.Blog>>(emptyList())
+    val blogs: StateFlow<List<com.miniproject.core.db.Blog>> = _blogs
+
+    private val _posts = MutableStateFlow<List<com.miniproject.core.db.BlogPost>>(emptyList())
+    val posts: StateFlow<List<com.miniproject.core.db.BlogPost>> = _posts
+
+    fun loadBlogs() {
+        viewModelScope.launch(Dispatchers.IO) {
+            _blogs.value = app.daos.getAllBlogs()
+        }
+    }
+
+    fun loadPosts(blogId: Long) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _posts.value = app.daos.getBlogPosts(blogId)
+        }
+    }
+}

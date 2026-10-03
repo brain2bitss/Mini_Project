@@ -35,15 +35,29 @@ fun AppNavigation() {
             onContactClick = { id -> 
                 currentContactId = id
                 currentScreen = "chat" 
-            }
+            },
+            onForumsClick = { currentScreen = "forums" }
         )
         "add_contact" -> AddContactScreen(
             onBack = { currentScreen = "contacts" },
             onAdded = { currentScreen = "contacts" }
         )
         "chat" -> currentContactId?.let { id ->
-            ChatScreen(contactId = id, onBack = { currentScreen = "contacts" })
+            ChatScreen(contactId = id, onBack = { currentScreen = "contacts" }, onBlogClick = { currentScreen = "blogs" })
         }
+        "forums" -> ForumsScreen(
+            onForumClick = { id ->
+                currentContactId = id // abusing this variable for forumId to save space
+                currentScreen = "forum_thread"
+            },
+            onBack = { currentScreen = "contacts" }
+        )
+        "forum_thread" -> currentContactId?.let { id ->
+            ForumThreadScreen(forumId = id, onBack = { currentScreen = "forums" })
+        }
+        "blogs" -> BlogsScreen(
+            onBack = { currentScreen = "chat" }
+        )
     }
 }
 
@@ -169,6 +183,7 @@ fun OnboardingScreen(
 fun ContactsScreen(
     onAddContact: () -> Unit, 
     onContactClick: (Long) -> Unit,
+    onForumsClick: () -> Unit,
     viewModel: ContactsViewModel = viewModel()
 ) {
     val contacts by viewModel.contacts.collectAsState()
@@ -431,6 +446,7 @@ fun AddContactScreen(
 fun ChatScreen(
     contactId: Long, 
     onBack: () -> Unit,
+    onBlogClick: () -> Unit,
     viewModel: ChatViewModel = viewModel()
 ) {
     var messageText by remember { mutableStateOf("") }
@@ -472,6 +488,9 @@ fun ChatScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = onBlogClick) {
+                        Text("📝", style = MaterialTheme.typography.titleLarge)
+                    }
                     IconButton(onClick = { /* Settings */ }) {
                         Text("⋮", style = MaterialTheme.typography.titleLarge)
                     }
@@ -550,6 +569,158 @@ fun ChatScreen(
                                 Text("✓✓", style = MaterialTheme.typography.labelSmall, modifier = Modifier.alpha(0.7f))
                             }
                         }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ForumsScreen(
+    onForumClick: (Long) -> Unit,
+    onBack: () -> Unit,
+    viewModel: ForumsViewModel = viewModel()
+) {
+    val forums by viewModel.forums.collectAsState()
+    
+    LaunchedEffect(Unit) {
+        viewModel.loadForums()
+    }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Group Forums") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Text("<", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            )
+        },
+        floatingActionButton = {
+            FloatingActionButton(onClick = { viewModel.createForum("New Forum", "A newly created forum") }) {
+                Text("+")
+            }
+        }
+    ) { padding ->
+        LazyColumn(modifier = Modifier.padding(padding).fillMaxSize()) {
+            items(forums) { forum ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    onClick = { onForumClick(forum.id) }
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(forum.title, style = MaterialTheme.typography.titleMedium)
+                        forum.description?.let {
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ForumThreadScreen(
+    forumId: Long,
+    onBack: () -> Unit,
+    viewModel: ForumsViewModel = viewModel()
+) {
+    var replyText by remember { mutableStateOf("") }
+    val posts by viewModel.posts.collectAsState()
+    
+    LaunchedEffect(forumId) {
+        viewModel.loadPosts(forumId)
+    }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Forum Thread") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Text("<", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            )
+        },
+        bottomBar = {
+            Row(modifier = Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = replyText,
+                    onValueChange = { replyText = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Post a reply...") },
+                    shape = RoundedCornerShape(24.dp)
+                )
+                if (replyText.isNotBlank()) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    IconButton(
+                        onClick = {
+                            viewModel.postReply(forumId, replyText)
+                            replyText = ""
+                        },
+                        modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
+                    ) {
+                        Text("➤", color = MaterialTheme.colorScheme.onPrimary)
+                    }
+                }
+            }
+        }
+    ) { padding ->
+        LazyColumn(modifier = Modifier.padding(padding).fillMaxSize()) {
+            items(posts) { post ->
+                Card(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text("User ${post.authorPublicKey.take(4).toByteArray().contentToString()}", style = MaterialTheme.typography.labelSmall)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(post.body, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun BlogsScreen(
+    onBack: () -> Unit,
+    viewModel: BlogsViewModel = viewModel()
+) {
+    val blogs by viewModel.blogs.collectAsState()
+    
+    LaunchedEffect(Unit) {
+        viewModel.loadBlogs()
+    }
+    
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Contact Blogs") },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Text("<", style = MaterialTheme.typography.titleLarge)
+                    }
+                }
+            )
+        }
+    ) { padding ->
+        LazyColumn(modifier = Modifier.padding(padding).fillMaxSize()) {
+            items(blogs) { blog ->
+                Card(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(blog.title, style = MaterialTheme.typography.titleMedium)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("By: ${blog.authorPublicKey.take(4).toByteArray().contentToString()}", style = MaterialTheme.typography.labelSmall)
                     }
                 }
             }
