@@ -19,6 +19,7 @@ android {
 
 dependencies {
     implementation(project(":core-crypto"))
+    implementation(project(":core-db"))
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("info.guardianproject:tor-android:0.4.9.13")
     implementation("info.guardianproject:jtorctl:0.4.5.7")
