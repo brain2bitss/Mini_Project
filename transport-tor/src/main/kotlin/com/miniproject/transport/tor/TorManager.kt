@@ -36,6 +36,7 @@ package com.miniproject.transport.tor
 import android.content.Context
 import android.util.Log
 import com.miniproject.core.crypto.CryptoManager
+import com.miniproject.transport.tor.btp.*
 import kotlinx.coroutines.runBlocking
 import java.io.File
 import java.io.IOException
@@ -165,6 +166,7 @@ class TorManager(private val context: Context) : TorTransport {
                 val serverSocket = ServerSocket(LOCAL_HS_PORT)
                 Log.i(TAG, "BTP listener started on port $LOCAL_HS_PORT")
                 onEvent?.invoke("BTP listener started on port $LOCAL_HS_PORT")
+                val reassembler = BtpReassembler()
                 while (true) {
                     val client = serverSocket.accept()
                     Log.i(TAG, "BTP: incoming connection from ${client.remoteSocketAddress}")
@@ -184,42 +186,100 @@ class TorManager(private val context: Context) : TorTransport {
                             Log.i(TAG, "BTP handshake complete — transcript: $txHashHex")
                             onEvent?.invoke("Handshake OK — transcript: $txHashHex")
 
-                            // Step 2: Read one encrypted frame (4-byte length + ciphertext)
-                            val input = client.getInputStream()
+                            val inStream = client.getInputStream()
+                            val outStream = client.getOutputStream()
+
+                            // Step 2: Read first encrypted frame (4-byte length + ciphertext)
                             val lenBuf = ByteArray(4)
                             var read = 0
                             while (read < 4) {
-                                val r = input.read(lenBuf, read, 4 - read)
+                                val r = inStream.read(lenBuf, read, 4 - read)
                                 if (r == -1) throw IOException("EOF reading frame length")
                                 read += r
                             }
                             val frameLen = java.nio.ByteBuffer.wrap(lenBuf).int
-                            require(frameLen in 1..65536) { "Invalid frame length: $frameLen" }
+                            require(frameLen in 1..BtpLimits.MAX_FRAME_WIRE_SIZE) { "Invalid frame length: $frameLen" }
                             val ciphertext = ByteArray(frameLen)
                             read = 0
                             while (read < frameLen) {
-                                val r = input.read(ciphertext, read, frameLen - read)
+                                val r = inStream.read(ciphertext, read, frameLen - read)
                                 if (r == -1) throw IOException("EOF reading frame body")
                                 read += r
                             }
 
                             // Step 3: Decrypt with receiveKey
                             val plaintext = CryptoManager.decryptAesGcm(session.receiveKey, ciphertext)
-                            val message = String(plaintext, Charsets.UTF_8)
-                            Log.i(TAG, "BTP received: \"$message\" (${plaintext.size} bytes)")
-                            onEvent?.invoke("Received: \"$message\"")
 
-                            // Step 4: Encrypt echo with sendKey and send back
-                            val echoCiphertext = CryptoManager.encryptAesGcm(
-                                session.sendKey,
-                                "echo:$message".toByteArray(Charsets.UTF_8)
-                            )
-                            val echoLen = java.nio.ByteBuffer.allocate(4).putInt(echoCiphertext.size).array()
-                            client.getOutputStream().write(echoLen)
-                            client.getOutputStream().write(echoCiphertext)
-                            client.getOutputStream().flush()
-                            Log.i(TAG, "BTP sent echo (${echoCiphertext.size} bytes)")
-                            onEvent?.invoke("Sent echo (${echoCiphertext.size} bytes)")
+                            if (plaintext.size >= BtpFrameCodec.HEADER_SIZE && plaintext[0] == BtpLimits.PROTOCOL_VERSION) {
+                                // Structured BTP Frame
+                                val firstFrame = BtpFrameCodec.decode(plaintext)
+                                Log.i(TAG, "BTP received frame: type=${firstFrame.type}, chunk=${firstFrame.chunkIndex + 1}/${firstFrame.totalChunks}")
+                                onEvent?.invoke("Received: ${firstFrame.type} chunk ${firstFrame.chunkIndex + 1}/${firstFrame.totalChunks}")
+
+                                if (firstFrame.type == BtpFrameType.DATA) {
+                                    // Send ACK for first chunk
+                                    val ackFrame = BtpChunker.createAckFrame(
+                                        msgId = firstFrame.msgId,
+                                        ackedChunkIndex = firstFrame.chunkIndex,
+                                        seqNum = 1L,
+                                        totalChunks = firstFrame.totalChunks
+                                    )
+                                    BtpFrameCodec.writeEncryptedFrame(outStream, ackFrame, session.sendKey)
+                                    Log.i(TAG, "BTP sent ACK for chunk ${firstFrame.chunkIndex + 1}/${firstFrame.totalChunks}")
+
+                                    var completePayload = reassembler.addChunk(firstFrame)
+                                    var ackSeq = 2L
+
+                                    while (completePayload == null) {
+                                        val nextFrame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+                                        if (nextFrame.type == BtpFrameType.DATA) {
+                                            val ack = BtpChunker.createAckFrame(
+                                                msgId = nextFrame.msgId,
+                                                ackedChunkIndex = nextFrame.chunkIndex,
+                                                seqNum = ackSeq++,
+                                                totalChunks = nextFrame.totalChunks
+                                            )
+                                            BtpFrameCodec.writeEncryptedFrame(outStream, ack, session.sendKey)
+                                            Log.i(TAG, "BTP sent ACK for chunk ${nextFrame.chunkIndex + 1}/${nextFrame.totalChunks}")
+                                            completePayload = reassembler.addChunk(nextFrame)
+                                        } else {
+                                            break
+                                        }
+                                    }
+
+                                    if (completePayload != null) {
+                                        val message = String(completePayload, Charsets.UTF_8)
+                                        val preview = if (message.length > 40) message.take(40) + "..." else message
+                                        Log.i(TAG, "BTP reassembled complete message: \"$preview\" (${completePayload.size} bytes)")
+                                        onEvent?.invoke("Reassembled: \"$preview\" (${completePayload.size}B)")
+
+                                        // Echo back
+                                        val echoPayload = "echo:$message".toByteArray(Charsets.UTF_8)
+                                        val echoFrames = BtpChunker.chunkMessage(echoPayload, maxChunkSize = BtpLimits.MAX_PAYLOAD_TOR)
+                                        for (echoFrame in echoFrames) {
+                                            BtpFrameCodec.writeEncryptedFrame(outStream, echoFrame, session.sendKey)
+                                        }
+                                        Log.i(TAG, "BTP sent echo in ${echoFrames.size} frame(s)")
+                                        onEvent?.invoke("Sent echo (${echoFrames.size} frames)")
+                                    }
+                                }
+                            } else {
+                                // Legacy raw message echo
+                                val message = String(plaintext, Charsets.UTF_8)
+                                Log.i(TAG, "BTP received raw: \"$message\" (${plaintext.size} bytes)")
+                                onEvent?.invoke("Received: \"$message\"")
+
+                                val echoCiphertext = CryptoManager.encryptAesGcm(
+                                    session.sendKey,
+                                    "echo:$message".toByteArray(Charsets.UTF_8)
+                                )
+                                val echoLen = java.nio.ByteBuffer.allocate(4).putInt(echoCiphertext.size).array()
+                                outStream.write(echoLen)
+                                outStream.write(echoCiphertext)
+                                outStream.flush()
+                                Log.i(TAG, "BTP sent echo (${echoCiphertext.size} bytes)")
+                                onEvent?.invoke("Sent echo (${echoCiphertext.size} bytes)")
+                            }
 
                             client.close()
                         } catch (e: Exception) {
@@ -306,6 +366,84 @@ class TorManager(private val context: Context) : TorTransport {
         } catch (e: Exception) {
             Log.e(TAG, "BTP connect failed", e)
             onEvent?.invoke("BTP connect failed: ${e.message}")
+            return null
+        }
+    }
+
+    /**
+     * Connects to a peer's onion address, performs a BTP handshake as initiator,
+     * splits [data] into chunked BTP frames, transmits each frame encrypted,
+     * verifies ACKs from the peer, and reads back the reassembled echo.
+     */
+    fun btpSendChunkedMessage(
+        peerOnionAddress: String,
+        data: ByteArray,
+        maxChunkSize: Int = BtpLimits.MAX_PAYLOAD_TOR,
+        onEvent: ((String) -> Unit)? = null
+    ): ByteArray? {
+        require(socksPort > 0) { "TorManager not started" }
+        try {
+            onEvent?.invoke("Connecting to $peerOnionAddress...")
+            val socket = connectToPeer(peerOnionAddress, 80)
+            socket.soTimeout = 60_000
+
+            // Handshake — initiator (isAlice = true)
+            val handshake = BtpHandshake()
+            val session = handshake.performHandshake(
+                socket.getInputStream(),
+                socket.getOutputStream(),
+                isAlice = true
+            )
+            val txHashHex = session.transcriptHash.take(8).joinToString("") { "%02x".format(it) }
+            Log.i(TAG, "BTP handshake complete (initiator) — transcript: $txHashHex")
+            onEvent?.invoke("Handshake OK — transcript: $txHashHex")
+
+            val inStream = socket.getInputStream()
+            val outStream = socket.getOutputStream()
+
+            // Chunk data into BTP frames
+            val frames = BtpChunker.chunkMessage(
+                payload = data,
+                maxChunkSize = maxChunkSize
+            )
+            val totalChunks = frames.size
+            Log.i(TAG, "BTP sending ${data.size} bytes in $totalChunks chunk(s)")
+            onEvent?.invoke("Sending ${data.size}B in $totalChunks chunk(s)...")
+
+            val flowController = BtpFlowController()
+
+            for (frame in frames) {
+                BtpFrameCodec.writeEncryptedFrame(outStream, frame, session.sendKey)
+                flowController.onFrameSent(frame)
+                Log.i(TAG, "BTP sent chunk ${frame.chunkIndex + 1}/$totalChunks (${frame.payload.size}B)")
+                onEvent?.invoke("Sent chunk ${frame.chunkIndex + 1}/$totalChunks (${frame.payload.size}B)")
+
+                // Read ACK frame from responder
+                val ackFrame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+                require(ackFrame.type == BtpFrameType.ACK) { "Expected ACK frame, got ${ackFrame.type}" }
+                flowController.onAckReceived(frame.sequenceNumber)
+                Log.i(TAG, "BTP received ACK for chunk ${frame.chunkIndex + 1}/$totalChunks")
+                onEvent?.invoke("ACK for chunk ${frame.chunkIndex + 1}/$totalChunks")
+            }
+
+            // Read echo response frame(s)
+            val reassembler = BtpReassembler()
+            var echoPayload: ByteArray? = null
+
+            while (echoPayload == null) {
+                val echoFrame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+                if (echoFrame.type == BtpFrameType.DATA) {
+                    echoPayload = reassembler.addChunk(echoFrame)
+                } else if (echoFrame.type == BtpFrameType.CLOSE) {
+                    break
+                }
+            }
+
+            socket.close()
+            return echoPayload
+        } catch (e: Exception) {
+            Log.e(TAG, "BTP chunked send failed", e)
+            onEvent?.invoke("BTP chunked send failed: ${e.message}")
             return null
         }
     }

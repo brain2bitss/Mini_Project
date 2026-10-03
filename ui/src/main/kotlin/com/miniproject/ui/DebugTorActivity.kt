@@ -35,6 +35,12 @@ class DebugTorActivity : ComponentActivity() {
         }
         layout.addView(btpTestButton)
 
+        val btpChunkButton = Button(this).apply {
+            text = "BTP Chunking Test (32KB)"
+            setOnClickListener { runBtpChunkingTest() }
+        }
+        layout.addView(btpChunkButton)
+
         val stopButton = Button(this).apply {
             text = "Stop Tor"
             setOnClickListener {
@@ -128,6 +134,51 @@ class DebugTorActivity : ComponentActivity() {
                 appendLog("⚠ BTP Self-Test: unexpected echo: \"$echo\"")
             } else {
                 appendLog("✗ BTP Self-Test FAILED — see log above")
+            }
+        }
+    }
+
+    /**
+     * Sends a 32 KB chunked message over Tor Onion Service via BTP.
+     * Verifies that the payload is split into multiple frames,
+     * encrypted with AES-256-GCM, individually acknowledged via ACK frames,
+     * reassembled by the receiver, and echoed back with full integrity.
+     */
+    private fun runBtpChunkingTest() {
+        if (!::torManager.isInitialized || torManager.onionAddress == null) {
+            appendLog("ERROR: Start Tor first!")
+            return
+        }
+        val address = torManager.onionAddress!!
+        appendLog("═══ BTP Chunking & Reassembly Test (32KB) ═══")
+        appendLog("Target: $address via Tor SOCKS...")
+
+        thread {
+            val testBuilder = StringBuilder()
+            val chunkSignature = "BrambleChat-P2P-Chunked-Transmission-Over-Tor-"
+            while (testBuilder.length < 32768) {
+                testBuilder.append(chunkSignature).append(testBuilder.length).append("\n")
+            }
+            val originalPayload = testBuilder.toString().take(32768).toByteArray(Charsets.UTF_8)
+            appendLog("Prepared payload: ${originalPayload.size} bytes (2 chunks of 16KB)")
+
+            val echoBytes = torManager.btpSendChunkedMessage(
+                peerOnionAddress = address,
+                data = originalPayload,
+                maxChunkSize = com.miniproject.transport.tor.btp.BtpLimits.MAX_PAYLOAD_TOR,
+                onEvent = { msg -> appendLog("[BTP-Chunk] $msg") }
+            )
+
+            if (echoBytes != null) {
+                val echoString = String(echoBytes, Charsets.UTF_8)
+                val expectedPayload = "echo:" + String(originalPayload, Charsets.UTF_8)
+                if (echoString == expectedPayload) {
+                    appendLog("✓ BTP Chunking Test PASSED — 32KB chunked, transmitted, ACKed, and reassembled over Tor!")
+                } else {
+                    appendLog("⚠ BTP Chunking Test: payload mismatch (${echoBytes.size} vs ${expectedPayload.length})")
+                }
+            } else {
+                appendLog("✗ BTP Chunking Test FAILED — see log above")
             }
         }
     }
