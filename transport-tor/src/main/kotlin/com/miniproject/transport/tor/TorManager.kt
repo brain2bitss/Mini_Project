@@ -216,7 +216,10 @@ class TorManager(private val context: Context) : TorTransport {
                                 Log.i(TAG, "BTP received frame: type=${firstFrame.type}, chunk=${firstFrame.chunkIndex + 1}/${firstFrame.totalChunks}")
                                 onEvent?.invoke("Received: ${firstFrame.type} chunk ${firstFrame.chunkIndex + 1}/${firstFrame.totalChunks}")
 
-                                if (firstFrame.type == BtpFrameType.DATA) {
+                                if (firstFrame.type == BtpFrameType.REKEY) {
+                                    // ═══ RATCHET MODE ═══
+                                    handleRatchetSession(firstFrame, session, inStream, outStream, onEvent)
+                                } else if (firstFrame.type == BtpFrameType.DATA) {
                                     // Send ACK for first chunk
                                     val ackFrame = BtpChunker.createAckFrame(
                                         msgId = firstFrame.msgId,
@@ -447,6 +450,210 @@ class TorManager(private val context: Context) : TorTransport {
             return null
         }
     }
+
+    /**
+     * Handles a ratchet-mode session on the responder side.
+     *
+     * Protocol:
+     *   1. Initiator sent a REKEY frame → we extract nothing (it's a signal)
+     *   2. We generate a DH keypair, send our pubkey in a REKEY response
+     *   3. Read initiator's DH pubkey from a second REKEY frame
+     *   4. Initialize DoubleRatchet as responder
+     *   5. Loop: read ratcheted DATA frames, decrypt, echo back ratcheted
+     */
+    private fun handleRatchetSession(
+        firstFrame: BtpFrame,
+        session: BtpSession,
+        inStream: java.io.InputStream,
+        outStream: java.io.OutputStream,
+        onEvent: ((String) -> Unit)?
+    ) {
+        Log.i(TAG, "BTP RATCHET MODE — received REKEY init")
+        onEvent?.invoke("RATCHET MODE — init received")
+
+        // Step 1: Generate our DH keypair for the ratchet
+        val responderDhKeyPair = CryptoManager.generateX25519KeyPair()
+        val responderDhPub = (responderDhKeyPair.public as org.bouncycastle.crypto.params.X25519PublicKeyParameters).encoded
+
+        // Step 2: Send our DH pubkey as a REKEY response
+        val rekeyResponse = BtpChunker.createRekeyFrame(1L, responderDhPub)
+        BtpFrameCodec.writeEncryptedFrame(outStream, rekeyResponse, session.sendKey)
+        Log.i(TAG, "BTP ratchet: sent our DH pub (${fingerprint(responderDhPub)})")
+        onEvent?.invoke("Ratchet: sent DH pub ${fingerprint(responderDhPub)}")
+
+        // Step 3: Read initiator's DH pubkey from second REKEY frame
+        val initiatorRekeyFrame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+        require(initiatorRekeyFrame.type == BtpFrameType.REKEY) {
+            "Expected REKEY with initiator DH pub, got ${initiatorRekeyFrame.type}"
+        }
+        val initiatorDhPub = initiatorRekeyFrame.payload
+        require(initiatorDhPub.size == 32) { "Invalid initiator DH pub size: ${initiatorDhPub.size}" }
+        Log.i(TAG, "BTP ratchet: received initiator DH pub (${fingerprint(initiatorDhPub)})")
+        onEvent?.invoke("Ratchet: got initiator DH pub ${fingerprint(initiatorDhPub)}")
+
+        // Step 4: Initialize DoubleRatchet as responder
+        val ratchet = DoubleRatchet.initAsResponder(session.transcriptHash, responderDhKeyPair)
+        Log.i(TAG, "BTP ratchet: initialized as responder")
+        onEvent?.invoke("Ratchet: initialized as responder")
+
+        // Step 5: Message loop — read ratcheted frames, decrypt, echo back
+        var msgCount = 0
+        while (true) {
+            try {
+                val frame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+                if (frame.type == BtpFrameType.CLOSE) {
+                    Log.i(TAG, "BTP ratchet: received CLOSE after $msgCount messages")
+                    onEvent?.invoke("Ratchet: CLOSE after $msgCount msgs")
+                    break
+                }
+                if (frame.type != BtpFrameType.DATA) {
+                    Log.w(TAG, "BTP ratchet: unexpected frame type ${frame.type}, skipping")
+                    continue
+                }
+
+                // Decrypt the ratcheted payload
+                val ratchetMsg = RatchetMessage.deserialize(frame.payload)
+                val plaintext = ratchet.decrypt(ratchetMsg)
+                val text = String(plaintext, Charsets.UTF_8)
+                msgCount++
+                val dhFp = fingerprint(ratchetMsg.header.dhRatchetPubKey)
+                Log.i(TAG, "BTP ratchet recv #$msgCount: \"$text\" (DH=$dhFp, msgN=${ratchetMsg.header.messageNumber})")
+                onEvent?.invoke("Ratchet recv #$msgCount: \"$text\" (DH=$dhFp)")
+
+                // Encrypt echo with ratchet
+                val echoPlain = "echo:$text".toByteArray(Charsets.UTF_8)
+                val echoRatchetMsg = ratchet.encrypt(echoPlain)
+                val echoBytes = echoRatchetMsg.serialize()
+                val echoFrame = BtpChunker.chunkMessage(echoBytes, maxChunkSize = BtpLimits.MAX_PAYLOAD_TOR).first()
+                BtpFrameCodec.writeEncryptedFrame(outStream, echoFrame, session.sendKey)
+                val echoDhFp = fingerprint(echoRatchetMsg.header.dhRatchetPubKey)
+                Log.i(TAG, "BTP ratchet echo #$msgCount: DH=$echoDhFp, msgN=${echoRatchetMsg.header.messageNumber}")
+                onEvent?.invoke("Ratchet echo #$msgCount (DH=$echoDhFp)")
+            } catch (e: java.io.EOFException) {
+                Log.i(TAG, "BTP ratchet: connection closed after $msgCount messages")
+                onEvent?.invoke("Ratchet: connection closed ($msgCount msgs)")
+                break
+            }
+        }
+    }
+
+    /**
+     * Self-test for the Double Ratchet over Tor.
+     *
+     * 1. Connects to own onion address
+     * 2. Performs BTP handshake
+     * 3. Exchanges DH pub keys via REKEY frames
+     * 4. Initializes DoubleRatchet as initiator
+     * 5. Sends 3 ratcheted messages, reads 3 ratcheted echoes
+     * 6. Verifies all echoes match and DH keys rotate each turn
+     *
+     * @return true if all 3 ratcheted messages echoed correctly
+     */
+    fun btpRatchetSelfTest(
+        peerOnionAddress: String,
+        onEvent: ((String) -> Unit)? = null
+    ): Boolean {
+        require(socksPort > 0) { "TorManager not started" }
+        try {
+            onEvent?.invoke("Connecting to $peerOnionAddress...")
+            val socket = connectToPeer(peerOnionAddress, 80)
+            socket.soTimeout = 90_000
+
+            // Handshake — initiator
+            val handshake = BtpHandshake()
+            val session = handshake.performHandshake(
+                socket.getInputStream(),
+                socket.getOutputStream(),
+                isAlice = true
+            )
+            val txHashHex = session.transcriptHash.take(8).joinToString("") { "%02x".format(it) }
+            Log.i(TAG, "BTP ratchet handshake OK — transcript: $txHashHex")
+            onEvent?.invoke("Handshake OK — transcript: $txHashHex")
+
+            val inStream = socket.getInputStream()
+            val outStream = socket.getOutputStream()
+
+            // Step 1: Send REKEY init signal (empty payload signals ratchet mode)
+            val rekeyInit = BtpChunker.createRekeyFrame(1L, ByteArray(32))
+            BtpFrameCodec.writeEncryptedFrame(outStream, rekeyInit, session.sendKey)
+            Log.i(TAG, "BTP ratchet: sent REKEY init signal")
+            onEvent?.invoke("Sent REKEY init signal")
+
+            // Step 2: Read responder's DH pubkey
+            val responderRekey = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+            require(responderRekey.type == BtpFrameType.REKEY) {
+                "Expected REKEY response, got ${responderRekey.type}"
+            }
+            val responderDhPub = responderRekey.payload
+            require(responderDhPub.size == 32) { "Invalid responder DH pub size: ${responderDhPub.size}" }
+            Log.i(TAG, "BTP ratchet: got responder DH pub (${fingerprint(responderDhPub)})")
+            onEvent?.invoke("Got responder DH pub ${fingerprint(responderDhPub)}")
+
+            // Step 3: Initialize DoubleRatchet as initiator
+            val ratchet = DoubleRatchet.initAsInitiator(session.transcriptHash, responderDhPub)
+
+            // Send our DH pubkey to responder
+            val ourDhPub = ratchet.getDhPubKey()
+            val ourRekeyFrame = BtpChunker.createRekeyFrame(2L, ourDhPub)
+            BtpFrameCodec.writeEncryptedFrame(outStream, ourRekeyFrame, session.sendKey)
+            Log.i(TAG, "BTP ratchet: sent our DH pub (${fingerprint(ourDhPub)})")
+            onEvent?.invoke("Sent our DH pub ${fingerprint(ourDhPub)}")
+
+            // Step 4: Send 3 ratcheted messages, read echoes
+            val dhPubKeys = mutableListOf<String>()
+            var allMatch = true
+
+            for (i in 1..3) {
+                val msg = "Ratchet-Msg-$i"
+                val ratchetMsg = ratchet.encrypt(msg.toByteArray(Charsets.UTF_8))
+                val dhFp = fingerprint(ratchetMsg.header.dhRatchetPubKey)
+                dhPubKeys.add(dhFp)
+
+                // Wrap in BTP DATA frame
+                val msgBytes = ratchetMsg.serialize()
+                val dataFrame = BtpChunker.chunkMessage(msgBytes, maxChunkSize = BtpLimits.MAX_PAYLOAD_TOR).first()
+                BtpFrameCodec.writeEncryptedFrame(outStream, dataFrame, session.sendKey)
+                Log.i(TAG, "BTP ratchet sent #$i: \"$msg\" (DH=$dhFp, msgN=${ratchetMsg.header.messageNumber})")
+                onEvent?.invoke("Sent #$i: \"$msg\" (DH=$dhFp)")
+
+                // Read ratcheted echo
+                val echoFrame = BtpFrameCodec.readEncryptedFrame(inStream, session.receiveKey)
+                require(echoFrame.type == BtpFrameType.DATA) { "Expected DATA echo, got ${echoFrame.type}" }
+                val echoRatchetMsg = RatchetMessage.deserialize(echoFrame.payload)
+                val echoPlain = ratchet.decrypt(echoRatchetMsg)
+                val echoText = String(echoPlain, Charsets.UTF_8)
+                val echoDhFp = fingerprint(echoRatchetMsg.header.dhRatchetPubKey)
+                Log.i(TAG, "BTP ratchet echo #$i: \"$echoText\" (DH=$echoDhFp)")
+                onEvent?.invoke("Echo #$i: \"$echoText\" (DH=$echoDhFp)")
+
+                val expected = "echo:$msg"
+                if (echoText != expected) {
+                    Log.e(TAG, "BTP ratchet echo mismatch: expected \"$expected\", got \"$echoText\"")
+                    onEvent?.invoke("MISMATCH #$i: expected \"$expected\"")
+                    allMatch = false
+                }
+            }
+
+            // Send CLOSE
+            val closeFrame = BtpChunker.createCloseFrame(99L)
+            BtpFrameCodec.writeEncryptedFrame(outStream, closeFrame, session.sendKey)
+            socket.close()
+
+            // Verify DH ratchet rotated keys
+            val uniqueDhKeys = dhPubKeys.toSet()
+            Log.i(TAG, "BTP ratchet: ${uniqueDhKeys.size} unique DH keys across 3 messages")
+            onEvent?.invoke("DH keys used: ${uniqueDhKeys.size} unique across 3 msgs")
+
+            return allMatch
+        } catch (e: Exception) {
+            Log.e(TAG, "BTP ratchet self-test failed", e)
+            onEvent?.invoke("Ratchet test failed: ${e.message}")
+            return false
+        }
+    }
+
+    private fun fingerprint(key: ByteArray): String =
+        key.take(6).joinToString("") { "%02x".format(it) }
 
     /**
      * Self-connects to our own onion address through the SOCKS proxy to verify

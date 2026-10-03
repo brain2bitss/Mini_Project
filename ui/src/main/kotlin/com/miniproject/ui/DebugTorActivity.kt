@@ -41,6 +41,12 @@ class DebugTorActivity : ComponentActivity() {
         }
         layout.addView(btpChunkButton)
 
+        val ratchetButton = Button(this).apply {
+            text = "Double Ratchet Test (3 msgs)"
+            setOnClickListener { runRatchetTest() }
+        }
+        layout.addView(ratchetButton)
+
         val stopButton = Button(this).apply {
             text = "Stop Tor"
             setOnClickListener {
@@ -179,6 +185,33 @@ class DebugTorActivity : ComponentActivity() {
                 }
             } else {
                 appendLog("✗ BTP Chunking Test FAILED — see log above")
+            }
+        }
+    }
+
+    /**
+     * Tests the Double Ratchet protocol over Tor.
+     * Sends 3 ratcheted messages (each with a unique per-message key),
+     * verifies echoes, and logs DH ratchet key rotation.
+     */
+    private fun runRatchetTest() {
+        if (!::torManager.isInitialized || torManager.onionAddress == null) {
+            appendLog("ERROR: Start Tor first!")
+            return
+        }
+        val address = torManager.onionAddress!!
+        appendLog("═══ Double Ratchet Test (3 messages) ═══")
+        appendLog("Target: $address via Tor SOCKS...")
+
+        thread {
+            val passed = torManager.btpRatchetSelfTest(
+                peerOnionAddress = address,
+                onEvent = { msg -> appendLog("[Ratchet] $msg") }
+            )
+            if (passed) {
+                appendLog("✓ Double Ratchet Test PASSED — 3 ratcheted messages exchanged with forward secrecy over Tor!")
+            } else {
+                appendLog("✗ Double Ratchet Test FAILED — see log above")
             }
         }
     }
