@@ -12,6 +12,7 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
+        android:name=".BrambleApp"
         android:allowBackup="false"
         android:label="BrambleChat"
         android:supportsRtl="true">

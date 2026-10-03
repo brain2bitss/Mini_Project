@@ -20,27 +20,37 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.draw.alpha
+import androidx.lifecycle.viewmodel.compose.viewModel
 
 @Composable
 fun AppNavigation() {
     var currentScreen by remember { mutableStateOf("onboarding") }
+    var currentContactId by remember { mutableStateOf<Long?>(null) }
 
     when (currentScreen) {
         "onboarding" -> OnboardingScreen(onComplete = { currentScreen = "contacts" })
         "contacts" -> ContactsScreen(
             onAddContact = { currentScreen = "add_contact" },
-            onContactClick = { currentScreen = "chat" }
+            onContactClick = { id -> 
+                currentContactId = id
+                currentScreen = "chat" 
+            }
         )
         "add_contact" -> AddContactScreen(
             onBack = { currentScreen = "contacts" },
             onAdded = { currentScreen = "contacts" }
         )
-        "chat" -> ChatScreen(onBack = { currentScreen = "contacts" })
+        "chat" -> currentContactId?.let { id ->
+            ChatScreen(contactId = id, onBack = { currentScreen = "contacts" })
+        }
     }
 }
 
 @Composable
-fun OnboardingScreen(onComplete: () -> Unit) {
+fun OnboardingScreen(
+    onComplete: () -> Unit,
+    viewModel: OnboardingViewModel = viewModel()
+) {
     var nickname by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var confirmPassword by remember { mutableStateOf("") }
@@ -139,7 +149,10 @@ fun OnboardingScreen(onComplete: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Button(
-                    onClick = onComplete,
+                    onClick = {
+                        viewModel.unlockApp(password)
+                        onComplete()
+                    },
                     modifier = Modifier.fillMaxWidth().height(56.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary)
                 ) {
@@ -152,22 +165,31 @@ fun OnboardingScreen(onComplete: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
-    val contacts = listOf("Alice", "Bob") // Mock data for now
-    
+fun ContactsScreen(
+    onAddContact: () -> Unit, 
+    onContactClick: (Long) -> Unit,
+    viewModel: ContactsViewModel = viewModel()
+) {
+    val contacts by viewModel.contacts.collectAsState()
+    val myOnionAddress by viewModel.myOnionAddress.collectAsState()
+
+    LaunchedEffect(Unit) {
+        viewModel.loadContacts()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Column {
-                        Text("finch", style = MaterialTheme.typography.titleLarge)
+                        Text("Me", style = MaterialTheme.typography.titleLarge)
                         Surface(
                             shape = RoundedCornerShape(4.dp),
                             color = MaterialTheme.colorScheme.surfaceVariant,
                             modifier = Modifier.padding(top = 4.dp)
                         ) {
                             Text(
-                                text = "3awmu2fqf...onion", 
+                                text = myOnionAddress ?: "Connecting...", 
                                 style = TextStyle(fontFamily = com.miniproject.ui.theme.MonoFontFamily, fontSize = 12.sp),
                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
@@ -217,7 +239,7 @@ fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
                 items(contacts) { contact ->
                     Card(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-                        onClick = onContactClick,
+                        onClick = { onContactClick(contact.id) },
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Row(modifier = Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -231,7 +253,7 @@ fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
                                     ),
                                 contentAlignment = Alignment.Center
                             ) {
-                                Text(contact.take(1).uppercase(), color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.Bold)
+                                Text(contact.alias.take(1).uppercase(), color = MaterialTheme.colorScheme.onSecondary, fontWeight = FontWeight.Bold)
                             }
                             Spacer(modifier = Modifier.width(16.dp))
                             // Center Content
@@ -240,7 +262,7 @@ fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
                                     // Status dot
                                     Box(modifier = Modifier.size(8.dp).background(color = Color.Green, shape = CircleShape))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text(contact, style = MaterialTheme.typography.titleMedium)
+                                    Text(contact.alias, style = MaterialTheme.typography.titleMedium)
                                 }
                                 Text("Last message preview...", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             }
@@ -269,7 +291,11 @@ fun ContactsScreen(onAddContact: () -> Unit, onContactClick: () -> Unit) {
 }
 
 @Composable
-fun AddContactScreen(onBack: () -> Unit, onAdded: () -> Unit) {
+fun AddContactScreen(
+    onBack: () -> Unit, 
+    onAdded: () -> Unit,
+    viewModel: ContactsViewModel = viewModel()
+) {
     var selectedTabIndex by remember { mutableStateOf(0) }
     val tabs = listOf("In person", "At a distance", "My link")
 
@@ -339,7 +365,10 @@ fun AddContactScreen(onBack: () -> Unit, onAdded: () -> Unit) {
                             )
                             Spacer(modifier = Modifier.height(24.dp))
                             Button(
-                                onClick = onAdded,
+                                onClick = { 
+                                    viewModel.addContact(link)
+                                    onAdded()
+                                },
                                 modifier = Modifier.fillMaxWidth().height(56.dp),
                                 enabled = link.isNotBlank()
                             ) {
@@ -367,8 +396,9 @@ fun AddContactScreen(onBack: () -> Unit, onAdded: () -> Unit) {
                                 shape = RoundedCornerShape(8.dp),
                                 color = MaterialTheme.colorScheme.surfaceVariant
                             ) {
+                                val myOnionAddress by viewModel.myOnionAddress.collectAsState()
                                 Text(
-                                    text = "bramble://3awmu2fqf...onion",
+                                    text = "bramble://${myOnionAddress ?: "loading..."}",
                                     style = TextStyle(fontFamily = com.miniproject.ui.theme.MonoFontFamily, fontSize = 14.sp),
                                     modifier = Modifier.padding(16.dp)
                                 )
@@ -387,14 +417,18 @@ fun AddContactScreen(onBack: () -> Unit, onAdded: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(onBack: () -> Unit) {
+fun ChatScreen(
+    contactId: Long, 
+    onBack: () -> Unit,
+    viewModel: ChatViewModel = viewModel()
+) {
     var messageText by remember { mutableStateOf("") }
-    // Mock messages: true = outgoing, false = incoming
-    val messages = remember { mutableStateListOf(
-        Pair(false, "Hey, did you get my public key?"),
-        Pair(true, "Yes, handshake complete. We're secure."),
-        Pair(false, "Awesome. Love the UI btw.")
-    ) }
+    val messages by viewModel.messages.collectAsState()
+    val contact by viewModel.contact.collectAsState()
+
+    LaunchedEffect(contactId) {
+        viewModel.loadChat(contactId)
+    }
 
     Scaffold(
         topBar = {
@@ -408,14 +442,14 @@ fun ChatScreen(onBack: () -> Unit) {
                                 .background(MaterialTheme.colorScheme.secondary, CircleShape),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("A", color = MaterialTheme.colorScheme.onSecondary)
+                            Text(contact?.alias?.take(1)?.uppercase() ?: "!", color = MaterialTheme.colorScheme.onSecondary)
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Column {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(modifier = Modifier.size(6.dp).background(Color.Green, CircleShape))
                                 Spacer(modifier = Modifier.width(6.dp))
-                                Text("Alice", style = MaterialTheme.typography.titleMedium)
+                                Text(contact?.alias ?: "Unknown", style = MaterialTheme.typography.titleMedium)
                             }
                             Text("Online via Tor", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
@@ -459,7 +493,7 @@ fun ChatScreen(onBack: () -> Unit) {
                         Spacer(modifier = Modifier.width(8.dp))
                         IconButton(
                             onClick = {
-                                messages.add(Pair(true, messageText))
+                                viewModel.sendMessage(contactId, messageText)
                                 messageText = ""
                             },
                             modifier = Modifier.background(MaterialTheme.colorScheme.primary, CircleShape)
@@ -478,8 +512,8 @@ fun ChatScreen(onBack: () -> Unit) {
             contentPadding = PaddingValues(vertical = 16.dp)
         ) {
             items(messages) { msg ->
-                val isOutgoing = msg.first
-                val text = msg.second
+                val isOutgoing = msg.direction == 1
+                val text = msg.bodyPlaintext
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = if (isOutgoing) Arrangement.End else Arrangement.Start
