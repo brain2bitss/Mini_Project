@@ -49,6 +49,21 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
         app.meshManager.stopDiscovery(bluetoothReceiver)
         bluetoothReceiver = null
     }
+
+    fun connectAndSyncRelays(address: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val socket = app.meshManager.connectToBluetoothPeer(address)
+            if (socket != null) {
+                try {
+                    app.relayProtocol.syncRelays(socket.inputStream, socket.outputStream)
+                } catch (e: Exception) {
+                    // ignore
+                } finally {
+                    socket.close()
+                }
+            }
+        }
+    }
 }
 
 class ChatViewModel(application: Application) : AndroidViewModel(application) {

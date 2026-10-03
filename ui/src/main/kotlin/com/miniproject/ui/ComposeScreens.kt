@@ -432,6 +432,7 @@ fun AddContactScreen(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                         onClick = {
                                             viewModel.addContact(device.second) // treat address as contact ID for MVP
+                                            viewModel.connectAndSyncRelays(device.second)
                                             onAdded()
                                         }
                                     ) {
