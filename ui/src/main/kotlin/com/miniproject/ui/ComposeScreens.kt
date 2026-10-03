@@ -213,6 +213,15 @@ fun ContactsScreen(
                         }
                     }
                 },
+                actions = {
+                    IconButton(onClick = onForumsClick) {
+                        Text("🗣", style = MaterialTheme.typography.titleLarge)
+                    }
+                    IconButton(onClick = { viewModel.toggleMailboxMode() }) {
+                        val isMailboxEnabled by viewModel.isMailboxMode.collectAsState()
+                        Text(if (isMailboxEnabled) "📬" else "📭", style = MaterialTheme.typography.titleLarge)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },

@@ -14,6 +14,7 @@ class BrambleApp : Application() {
     lateinit var daos: Daos
     lateinit var messageRepository: MessageRepository
     lateinit var torManager: TorManager
+    lateinit var mailboxManager: com.miniproject.mailbox.MailboxManager
     lateinit var meshManager: com.miniproject.transport.mesh.MeshManager
     lateinit var queueWorker: QueueWorker
     lateinit var btpSessionManager: BtpSessionManager
@@ -52,6 +53,7 @@ class BrambleApp : Application() {
         
         btpSessionManager = BtpSessionManager(daos)
         queueWorker = QueueWorker(daos, torManager)
+        mailboxManager = com.miniproject.mailbox.MailboxManager(torManager, daos)
         
         relayProtocol = com.miniproject.transport.relay.RelayProtocol(daos)
         
@@ -63,6 +65,27 @@ class BrambleApp : Application() {
                 } catch (e: Exception) {
                     // ignore sync errors
                 } finally {
+                    socket.close()
+                }
+            }
+        }
+        
+        // Start listening for Tor connections
+        torManager.listenForPeers { socket ->
+            appScope.launch {
+                try {
+                    // Quick peek to see if it's a Mailbox sync or chat connection
+                    // For MVP simplicity, we just try to read an integer. If it's a mailbox CMD, MailboxManager handles it.
+                    // But an InputStream can't be easily peeked without PushbackInputStream.
+                    // So we will just let MailboxManager handle it if mailbox mode is enabled.
+                    // If not, we'd normally route it to BtpSessionManager.
+                    if (mailboxManager.isMailboxModeEnabled) {
+                        mailboxManager.handleIncomingConnection(socket)
+                    } else {
+                        // TODO: handle incoming BTP connection for chat
+                        socket.close()
+                    }
+                } catch (e: Exception) {
                     socket.close()
                 }
             }

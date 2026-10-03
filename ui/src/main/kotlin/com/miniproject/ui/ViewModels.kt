@@ -20,6 +20,16 @@ class ContactsViewModel(application: Application) : AndroidViewModel(application
     private val _myOnionAddress = MutableStateFlow<String?>(null)
     val myOnionAddress: StateFlow<String?> = _myOnionAddress
 
+    private val _isMailboxMode = MutableStateFlow(false)
+    val isMailboxMode: StateFlow<Boolean> = _isMailboxMode
+
+    fun toggleMailboxMode() {
+        _isMailboxMode.value = !_isMailboxMode.value
+        if (_isMailboxMode.value) {
+            app.mailboxManager.enableMailboxMode()
+        }
+    }
+
     fun loadContacts() {
         viewModelScope.launch(Dispatchers.IO) {
             _contacts.value = app.daos.getAllContacts()

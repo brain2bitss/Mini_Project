@@ -343,6 +343,37 @@ class Daos(private val db: SQLiteDatabase) {
     fun removeRelayPayload(id: Long) {
         db.delete(DatabaseHelper.TABLE_RELAY_QUEUE, "id = ?", arrayOf(id.toString()))
     }
+
+    // --- Mailbox Queue ---
+    fun enqueueMailboxPayload(item: MailboxQueueItem): Long {
+        val values = ContentValues().apply {
+            put("dest_onion", item.destOnion)
+            put("payload", item.payload)
+            put("created_at", item.createdAt)
+        }
+        return db.insert(DatabaseHelper.TABLE_MAILBOX_QUEUE, null, values)
+    }
+
+    fun getPendingMailboxPayloads(): List<MailboxQueueItem> {
+        val items = mutableListOf<MailboxQueueItem>()
+        db.query(DatabaseHelper.TABLE_MAILBOX_QUEUE, null, null, null, null, null, "created_at ASC").use { cursor ->
+            while (cursor.moveToNext()) {
+                items.add(
+                    MailboxQueueItem(
+                        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                        destOnion = cursor.getString(cursor.getColumnIndexOrThrow("dest_onion")),
+                        payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload")),
+                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at"))
+                    )
+                )
+            }
+        }
+        return items
+    }
+    
+    fun removeMailboxPayload(id: Long) {
+        db.delete(DatabaseHelper.TABLE_MAILBOX_QUEUE, "id = ?", arrayOf(id.toString()))
+    }
     // --- Forums DAO ---
     fun insertForum(forum: Forum): Long {
         val values = ContentValues().apply {
