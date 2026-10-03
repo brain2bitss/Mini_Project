@@ -20,12 +20,13 @@ class RelayManager(private val dbDaos: Daos) {
      */
     fun enqueueForRelay(destinationOnion: String, encryptedPayload: ByteArray) {
         // We prepend the hop count to the payload (in a real implementation this would be parsed)
-        dbDaos.enqueuePayload(
-            com.miniproject.core.db.TransportQueueItem(
-                destinationOnion = destinationOnion,
+        dbDaos.enqueueRelayPayload(
+            com.miniproject.core.db.RelayQueueItem(
+                destOnion = destinationOnion,
+                hopCount = 0,
+                ttl = TTL_MILLIS.toInt(),
                 payload = encryptedPayload,
-                priority = 0,
-                timestamp = System.currentTimeMillis()
+                createdAt = System.currentTimeMillis()
             )
         )
     }
@@ -35,10 +36,10 @@ class RelayManager(private val dbDaos: Daos) {
      */
     fun cleanupExpired() {
         val now = System.currentTimeMillis()
-        val pending = dbDaos.getPendingPayloads()
+        val pending = dbDaos.getPendingRelayPayloads()
         pending.forEach { item ->
-            if (now - item.timestamp > TTL_MILLIS) {
-                dbDaos.removePayload(item.id)
+            if (now - item.createdAt > TTL_MILLIS) {
+                dbDaos.removeRelayPayload(item.id)
             }
         }
     }
@@ -47,8 +48,8 @@ class RelayManager(private val dbDaos: Daos) {
      * Retrieves packets meant for a specific peer to send upon connection.
      */
     fun getPacketsForPeer(onionAddress: String): List<ByteArray> {
-        val pending = dbDaos.getPendingPayloads().filter { it.destinationOnion == onionAddress }
-        pending.forEach { dbDaos.removePayload(it.id) }
+        val pending = dbDaos.getPendingRelayPayloads().filter { it.destOnion == onionAddress }
+        pending.forEach { dbDaos.removeRelayPayload(it.id) }
         return pending.map { it.payload }
     }
 }

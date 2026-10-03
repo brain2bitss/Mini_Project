@@ -279,4 +279,55 @@ class Daos(private val db: SQLiteDatabase) {
             arrayOf(nextAttemptAt, id)
         )
     }
+
+    // --- Relay Queue DAO ---
+    fun enqueueRelayPayload(item: RelayQueueItem): Long {
+        val values = ContentValues().apply {
+            put("dest_onion", item.destOnion)
+            put("hop_count", item.hopCount)
+            put("ttl", item.ttl)
+            put("payload", item.payload)
+            put("created_at", item.createdAt)
+        }
+        return db.insert(DatabaseHelper.TABLE_RELAY_QUEUE, null, values)
+    }
+
+    fun getPendingRelayPayloads(): List<RelayQueueItem> {
+        val items = mutableListOf<RelayQueueItem>()
+        db.query(DatabaseHelper.TABLE_RELAY_QUEUE, null, null, null, null, null, "created_at ASC").use { cursor ->
+            while (cursor.moveToNext()) {
+                items.add(
+                    RelayQueueItem(
+                        id = cursor.getLong(cursor.getColumnIndexOrThrow("id")),
+                        destOnion = cursor.getString(cursor.getColumnIndexOrThrow("dest_onion")),
+                        hopCount = cursor.getInt(cursor.getColumnIndexOrThrow("hop_count")),
+                        ttl = cursor.getInt(cursor.getColumnIndexOrThrow("ttl")),
+                        payload = cursor.getBlob(cursor.getColumnIndexOrThrow("payload")),
+                        createdAt = cursor.getLong(cursor.getColumnIndexOrThrow("created_at"))
+                    )
+                )
+            }
+        }
+        return items
+    }
+    
+    fun removeRelayPayload(id: Long) {
+        db.delete(DatabaseHelper.TABLE_RELAY_QUEUE, "id = ?", arrayOf(id.toString()))
+    }
 }
+
+data class RelayQueueItem(
+    val id: Long = 0,
+    val destOnion: String,
+    val hopCount: Int,
+    val ttl: Int,
+    val payload: ByteArray,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class MailboxQueueItem(
+    val id: Long = 0,
+    val destOnion: String,
+    val payload: ByteArray,
+    val createdAt: Long = System.currentTimeMillis()
+)
